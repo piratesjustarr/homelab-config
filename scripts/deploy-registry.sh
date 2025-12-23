@@ -24,9 +24,16 @@ echo 'mkdir -p ~/yggdrasil-registry' >> $TEMP_SCRIPT
 echo 'cd ~/yggdrasil-registry' >> $TEMP_SCRIPT
 echo 'cp /tmp/docker-compose.registry.yml ./docker-compose.yml' >> $TEMP_SCRIPT
 echo 'cp /tmp/registry-config.yml ./registry-config.yml' >> $TEMP_SCRIPT
-echo 'which docker-compose &>/dev/null; or which podman-compose &>/dev/null; or which /usr/bin/docker-compose &>/dev/null' >> $TEMP_SCRIPT
 echo 'set COMPOSE_CMD (which podman-compose; or which docker-compose; or echo /usr/bin/docker-compose)' >> $TEMP_SCRIPT
-echo '$COMPOSE_CMD up -d' >> $TEMP_SCRIPT
+echo 'echo "Using: $COMPOSE_CMD"' >> $TEMP_SCRIPT
+echo 'echo "Starting containers..."' >> $TEMP_SCRIPT
+echo '$COMPOSE_CMD up -d 2>&1' >> $TEMP_SCRIPT
+echo 'if test $status -ne 0' >> $TEMP_SCRIPT
+echo '  echo "❌ Failed to start containers"' >> $TEMP_SCRIPT
+echo '  echo "=== Error logs ==="' >> $TEMP_SCRIPT
+echo '  $COMPOSE_CMD logs 2>&1' >> $TEMP_SCRIPT
+echo '  exit 1' >> $TEMP_SCRIPT
+echo 'end' >> $TEMP_SCRIPT
 echo 'echo "⏳ Quick health check (5 attempts)..."' >> $TEMP_SCRIPT
 echo 'set timeout 0' >> $TEMP_SCRIPT
 echo 'while test $timeout -lt 5' >> $TEMP_SCRIPT
@@ -37,7 +44,9 @@ echo 'end' >> $TEMP_SCRIPT
 echo 'if test $timeout -lt 5' >> $TEMP_SCRIPT
 echo '  echo "✅ Registry is responding!"' >> $TEMP_SCRIPT
 echo 'else' >> $TEMP_SCRIPT
-echo '  echo "⚠️  Registry may still be starting (check with: $COMPOSE_CMD ps)"' >> $TEMP_SCRIPT
+echo '  echo "⚠️  Registry containers started but may need time to be ready"' >> $TEMP_SCRIPT
+echo '  echo "Full logs:"' >> $TEMP_SCRIPT
+echo '  $COMPOSE_CMD logs' >> $TEMP_SCRIPT
 echo 'end' >> $TEMP_SCRIPT
 echo 'echo ""' >> $TEMP_SCRIPT
 echo 'echo "📊 Registry Status:"' >> $TEMP_SCRIPT
