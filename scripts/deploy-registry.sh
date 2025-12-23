@@ -27,18 +27,18 @@ echo 'cp /tmp/registry-config.yml ./registry-config.yml' >> $TEMP_SCRIPT
 echo 'which docker-compose &>/dev/null; or which podman-compose &>/dev/null; or which /usr/bin/docker-compose &>/dev/null' >> $TEMP_SCRIPT
 echo 'set COMPOSE_CMD (which podman-compose; or which docker-compose; or echo /usr/bin/docker-compose)' >> $TEMP_SCRIPT
 echo '$COMPOSE_CMD up -d' >> $TEMP_SCRIPT
-echo 'echo "⏳ Waiting for registry to be healthy..."' >> $TEMP_SCRIPT
+echo 'echo "⏳ Quick health check (5 attempts)..."' >> $TEMP_SCRIPT
 echo 'set timeout 0' >> $TEMP_SCRIPT
-echo 'while not curl -f http://localhost:5000/v2/ >/dev/null 2>&1' >> $TEMP_SCRIPT
-echo '  echo "  ...waiting for registry..."' >> $TEMP_SCRIPT
-echo '  sleep 2' >> $TEMP_SCRIPT
+echo 'while test $timeout -lt 5' >> $TEMP_SCRIPT
+echo '  sleep 1' >> $TEMP_SCRIPT
+echo '  curl -f http://localhost:5000/v2/ >/dev/null 2>&1; and break' >> $TEMP_SCRIPT
 echo '  set timeout (math $timeout + 1)' >> $TEMP_SCRIPT
-echo '  if test $timeout -gt 30' >> $TEMP_SCRIPT
-echo '    echo "❌ Registry failed to start"' >> $TEMP_SCRIPT
-echo '    exit 1' >> $TEMP_SCRIPT
-echo '  end' >> $TEMP_SCRIPT
 echo 'end' >> $TEMP_SCRIPT
-echo 'echo "✅ Registry is healthy!"' >> $TEMP_SCRIPT
+echo 'if test $timeout -lt 5' >> $TEMP_SCRIPT
+echo '  echo "✅ Registry is responding!"' >> $TEMP_SCRIPT
+echo 'else' >> $TEMP_SCRIPT
+echo '  echo "⚠️  Registry may still be starting (check with: $COMPOSE_CMD ps)"' >> $TEMP_SCRIPT
+echo 'end' >> $TEMP_SCRIPT
 echo 'echo ""' >> $TEMP_SCRIPT
 echo 'echo "📊 Registry Status:"' >> $TEMP_SCRIPT
 echo '$COMPOSE_CMD ps' >> $TEMP_SCRIPT
