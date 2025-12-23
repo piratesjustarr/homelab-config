@@ -609,9 +609,83 @@ Dependencies:
 
 ---
 
+## Containerization (v0.2.0+)
+
+### Running Agents in Containers
+
+All agents can run in containers for better reproducibility and deployment:
+
+```bash
+# Build all images
+cd ~/homelab-config
+./scripts/build-and-push.sh
+
+# Deploy registry on Surtr
+# (stores executor images, code agent, coordinator)
+cd docker
+podman-compose -f docker-compose.registry.yml up -d
+
+# Deploy executor on Fenrir (pull from registry)
+podman run -d \
+  --name yggdrasil-executor \
+  --net host \
+  -v ~/.ssh:/root/.ssh:ro \
+  -v /var/log:/var/log \
+  localhost:5000/yggdrasil-executor:latest
+
+# Deploy code agent on Surtr (requires Ollama running)
+podman run -d \
+  --name yggdrasil-code-agent \
+  --net host \
+  --gpus all \
+  -e OLLAMA_HOST=http://localhost:11434 \
+  localhost:5000/yggdrasil-code-agent:latest
+```
+
+### Dockerfile Structure
+
+- **Dockerfile.executor**: Python 3.11 + Flask + agent framework (multi-executor variant)
+- **Dockerfile.coordinator**: Coordinator agent (central dispatcher)
+- **Dockerfile.code-agent**: Code LLM agent with Ollama support (runs on port 5001)
+
+Each Dockerfile:
+- Uses `python:3.11-slim` base image (Red Hat UBI compatible with Bluefin)
+- Installs only necessary system dependencies (minimal image size)
+- Includes health checks for monitoring
+- Logs to `/var/log` (container mounts for persistence)
+
+### Registry on Surtr
+
+Registry runs on port 5000 (via docker-compose):
+- Stores versioned executor images
+- Optional web UI on port 8080 for browsing images
+- Configuration in `docker/registry-config.yml`
+- Data persists in `registry-data` volume
+
+### Container Deployment Checklist
+
+- [ ] Build images with `./scripts/build-and-push.sh`
+- [ ] Deploy registry: `podman-compose -f docker/docker-compose.registry.yml up -d`
+- [ ] Verify registry: `curl http://localhost:5000/v2/`
+- [ ] Deploy executors on Fenrir, Huginn (pull from registry)
+- [ ] Deploy code agent on Surtr with GPU support
+- [ ] Verify all health checks passing: `podman ps`
+- [ ] Update Coordinator to use containerized executors
+- [ ] Test with manual curl to container endpoints
+
+---
+
 ## Version History
 
+- **v0.2.0** (2025-12-23): Containerization + Code LLM Agent
+  - All agents now runnable as containers
+  - Private registry on Surtr
+  - Code generation agent (Qwen/Granite based)
+  - Aligns with Bluefin cloud-native principles
+
 - **v0.1.0** (2025-12-21): Initial HTTP agent framework with 3 executors + Coordinator
-- Stateless design, sequential execution, git-backed task graph
-- 18 total task handlers across Fenrir, Surtr, Huginn
-- Next: Parallel execution, dynamic routing, planning agent integration
+  - Stateless design, sequential execution, git-backed task graph
+  - 18 total task handlers across Fenrir, Surtr, Huginn
+  - Bare-metal agent execution
+
+- **Next**: Parallel execution, dynamic routing, planning agent integration
