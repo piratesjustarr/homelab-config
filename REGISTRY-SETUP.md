@@ -1,7 +1,7 @@
 # Yggdrasil Private OCI Registry Setup
 
 **Task**: [Beads yggdrasil-beads-2e5.3]  
-**Status**: In Progress  
+**Status**: ✅ Closed  
 **Purpose**: Host container images for agents (executor, coordinator, code-agent) on Surtr
 
 ---
@@ -9,9 +9,9 @@
 ## Architecture
 
 - **Registry Service**: Docker Registry v2 on Surtr port 5000
-- **UI**: Joxit Registry UI on port 8080 (for browsing images)
-- **Storage**: Docker volume `registry-data` (persistent)
+- **Storage**: Podman volume `registry-data` (persistent)
 - **Network**: Local network, Tailscale accessible
+- **Management**: `podman-compose` handles container orchestration
 
 ---
 
@@ -21,14 +21,14 @@
 
 From `~/homelab-config`:
 
-```bash
-./scripts/deploy-registry.sh surtr 5000 8080
+```fish
+./scripts/deploy-registry.sh surtr
 ```
 
 This will:
-1. Copy docker-compose files to Surtr
-2. Create `/home/$USER/yggdrasil-registry` directory
-3. Start registry + UI containers
+1. Copy docker-compose.yml to Surtr
+2. Create `~/yggdrasil-registry` directory
+3. Start registry container with podman-compose
 4. Health-check registry endpoint
 5. Display service URLs
 
@@ -36,30 +36,26 @@ This will:
 
 SSH into Surtr:
 
-```bash
+```fish
 ssh surtr
 
 # Create working directory
 mkdir -p ~/yggdrasil-registry
 cd ~/yggdrasil-registry
-
-# Copy config files (from local first)
-# Assume docker-compose.registry.yml and registry-config.yml are in place
 ```
 
 From local machine:
 
-```bash
+```fish
 scp ~/homelab-config/docker/docker-compose.registry.yml surtr:~/yggdrasil-registry/docker-compose.yml
-scp ~/homelab-config/docker/registry-config.yml surtr:~/yggdrasil-registry/registry-config.yml
 ```
 
 Back on Surtr:
 
-```bash
+```fish
 cd ~/yggdrasil-registry
-docker-compose up -d
-docker-compose ps
+podman-compose up -d
+podman-compose ps
 ```
 
 ---
@@ -81,58 +77,7 @@ curl http://surtr:5000/v2/
 curl http://surtr:5000/v2/_catalog
 ```
 
-### Access UI
 
-Open browser: `http://surtr:8080`
-
----
-
-## Pushing Images
-
-### Build & Tag
-
-```bash
-cd ~/homelab-config
-
-# Build executor image
-docker build -f docker/Dockerfile.executor -t surtr:5000/yggdrasil/executor:latest .
-
-# Build coordinator image
-docker build -f docker/Dockerfile.coordinator -t surtr:5000/yggdrasil/coordinator:latest .
-
-# Build code-agent image
-docker build -f docker/Dockerfile.code-agent -t surtr:5000/yggdrasil/code-agent:latest .
-```
-
-### Push to Registry
-
-```bash
-docker push surtr:5000/yggdrasil/executor:latest
-docker push surtr:5000/yggdrasil/coordinator:latest
-docker push surtr:5000/yggdrasil/code-agent:latest
-```
-
----
-
-## Pulling Images on Other Machines
-
-### Fenrir / Huginn (if not on Surtr's network)
-
-Configure Docker daemon (`/etc/docker/daemon.json`):
-
-```json
-{
-  "insecure-registries": ["surtr:5000"]
-}
-```
-
-Then:
-
-```bash
-docker pull surtr:5000/yggdrasil/executor:latest
-docker pull surtr:5000/yggdrasil/coordinator:latest
-docker pull surtr:5000/yggdrasil/code-agent:latest
-```
 
 ---
 
