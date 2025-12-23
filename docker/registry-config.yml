@@ -1,0 +1,21 @@
+# Basic OCI Registry configuration
+# For production, add auth, TLS, etc.
+
+version: 0.1
+log:
+  level: info
+
+storage:
+  filesystem:
+    rootdirectory: /var/lib/registry
+
+http:
+  addr: :5000
+  headers:
+    X-Content-Type-Options:
+      - nosniff
+
+# GC - clean up old images
+gc:
+  enabled: true
+  deleteuntagged: false

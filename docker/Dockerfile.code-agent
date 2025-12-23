@@ -1,0 +1,39 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy agent framework, requirements, and code agent
+COPY agents/ agents/
+COPY agent-executors/ agent-executors/
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install LLM-specific dependencies
+RUN pip install --no-cache-dir \
+    ollama>=0.0.11 \
+    langchain>=0.1.0 \
+    pydantic>=2.0
+
+# Copy code agent handler
+COPY agent-executors/code-agent.py executor.py
+
+# Create log directory
+RUN mkdir -p /var/log && touch /var/log/yggdrasil-agent.log
+
+# Health check on different port (5001)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:5001/health || exit 1
+
+EXPOSE 5001
+
+# Run code agent on port 5001 (to avoid conflict with regular executor on 5000)
+CMD ["python3", "executor.py"]

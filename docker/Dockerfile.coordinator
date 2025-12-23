@@ -1,0 +1,24 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy coordinator and requirements
+COPY coordinator/ coordinator/
+COPY agents/ agents/
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Create log directory
+RUN mkdir -p /var/log && touch /var/log/yggdrasil-coordinator.log
+
+# Coordinator runs in foreground (no health check needed, it's long-running)
+CMD ["python3", "coordinator/coordinator.py"]

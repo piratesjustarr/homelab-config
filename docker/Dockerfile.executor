@@ -1,0 +1,34 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    jq \
+    openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy agent framework and requirements
+COPY agents/ agents/
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy executor (specialized per machine via build arg)
+ARG EXECUTOR_TYPE=fenrir
+COPY agent-executors/${EXECUTOR_TYPE}-executor.py executor.py
+
+# Create log directory
+RUN mkdir -p /var/log && touch /var/log/yggdrasil-agent.log
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:5000/health || exit 1
+
+EXPOSE 5000
+
+# Run executor
+CMD ["python3", "executor.py"]

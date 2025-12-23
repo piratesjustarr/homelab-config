@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  registry:
+    image: docker.io/library/registry:2
+    container_name: yggdrasil-registry
+    ports:
+      - "5000:5000"
+    volumes:
+      - registry-data:/var/lib/registry
+      - ./registry-config.yml:/etc/docker/registry/config.yml:ro
+    environment:
+      REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY: /var/lib/registry
+      REGISTRY_HTTP_ADDR: 0.0.0.0:5000
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/v2/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Optional: Registry UI for browsing images
+  registry-ui:
+    image: joxit/docker-registry-ui:latest
+    container_name: yggdrasil-registry-ui
+    ports:
+      - "8080:80"
+    environment:
+      REGISTRY_URL: http://registry:5000
+      REGISTRY_TITLE: "Yggdrasil Registry"
+      DELETE_IMAGES: "true"
+      SHOW_CONTENT_DIGEST: "true"
+    depends_on:
+      - registry
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  registry-data:
+    driver: local
