@@ -1,24 +1,24 @@
-#!/bin/bash
+#!/usr/bin/env fish
 # Build all Yggdrasil agent images and push to registry
 
-set -e
-
-REGISTRY="${REGISTRY:-localhost:5000}"
-VERSION="${VERSION:-v0.2.0}"
-BUILD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+set REGISTRY (string join '' $REGISTRY '')
+test -z "$REGISTRY"; and set REGISTRY "localhost:5000"
+set VERSION (string join '' $VERSION '')
+test -z "$VERSION"; and set VERSION "v0.2.0"
+set BUILD_DIR (cd (dirname (status filename))/.. && pwd)
 
 echo "Building Yggdrasil agent images..."
 echo "Registry: $REGISTRY"
 echo "Version: $VERSION"
 
 # Colors for output
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+set GREEN '\033[0;32m'
+set BLUE '\033[0;34m'
+set NC '\033[0m'
 
 # Build executor images
-for executor in fenrir surtr huginn; do
-    echo -e "${BLUE}Building $executor executor...${NC}"
+for executor in fenrir surtr huginn
+    echo -e "$BLUE"Building $executor executor..."$NC"
     podman build \
         -t "$REGISTRY/yggdrasil-executor:$VERSION" \
         -t "$REGISTRY/yggdrasil-executor-$executor:$VERSION" \
@@ -26,46 +26,46 @@ for executor in fenrir surtr huginn; do
         -f "$BUILD_DIR/docker/Dockerfile.executor" \
         "$BUILD_DIR"
     
-    echo -e "${GREEN}✓ Built $executor executor${NC}"
-done
+    echo -e "$GREEN"✓ Built $executor executor"$NC"
+end
 
 # Tag as latest
-echo -e "${BLUE}Tagging as latest...${NC}"
+echo -e "$BLUE"Tagging as latest..."$NC"
 podman tag "$REGISTRY/yggdrasil-executor:$VERSION" "$REGISTRY/yggdrasil-executor:latest"
 
 # Build coordinator
-echo -e "${BLUE}Building coordinator...${NC}"
+echo -e "$BLUE"Building coordinator..."$NC"
 podman build \
     -t "$REGISTRY/yggdrasil-coordinator:$VERSION" \
     -t "$REGISTRY/yggdrasil-coordinator:latest" \
     -f "$BUILD_DIR/docker/Dockerfile.coordinator" \
     "$BUILD_DIR"
 
-echo -e "${GREEN}✓ Built coordinator${NC}"
+echo -e "$GREEN"✓ Built coordinator"$NC"
 
 # Build code agent
-echo -e "${BLUE}Building code agent...${NC}"
+echo -e "$BLUE"Building code agent..."$NC"
 podman build \
     -t "$REGISTRY/yggdrasil-code-agent:$VERSION" \
     -t "$REGISTRY/yggdrasil-code-agent:latest" \
     -f "$BUILD_DIR/docker/Dockerfile.code-agent" \
     "$BUILD_DIR"
 
-echo -e "${GREEN}✓ Built code agent${NC}"
+echo -e "$GREEN"✓ Built code agent"$NC"
 
 # Push to registry if not localhost
-if [[ "$REGISTRY" != "localhost:5000" ]]; then
-    echo -e "${BLUE}Pushing images to $REGISTRY...${NC}"
+if test "$REGISTRY" != "localhost:5000"
+    echo -e "$BLUE"Pushing images to $REGISTRY..."$NC"
     podman push "$REGISTRY/yggdrasil-executor:$VERSION"
     podman push "$REGISTRY/yggdrasil-executor:latest"
     podman push "$REGISTRY/yggdrasil-coordinator:$VERSION"
     podman push "$REGISTRY/yggdrasil-coordinator:latest"
     podman push "$REGISTRY/yggdrasil-code-agent:$VERSION"
     podman push "$REGISTRY/yggdrasil-code-agent:latest"
-    echo -e "${GREEN}✓ Pushed to registry${NC}"
-fi
+    echo -e "$GREEN"✓ Pushed to registry"$NC"
+end
 
-echo -e "${GREEN}Build complete!${NC}"
+echo -e "$GREEN"Build complete!"$NC"
 echo ""
 echo "Next steps:"
 echo "1. Deploy registry: ./scripts/deploy-registry.sh"
