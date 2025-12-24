@@ -155,9 +155,23 @@ class Coordinator:
         # Infer task type from labels if not set
         task_type = task.get('type')
         if not task_type:
+            title = task.get('title', '')
             labels = task.get('labels', [])
-            if 'code-generation' in labels:
-                task_type = 'code-generation'
+            
+            # Map to actual code-agent handlers
+            if 'code-generation' in labels or 'Generate' in title:
+                task_type = 'code-generate'
+            elif title.startswith('Code task: Add docstrings'):
+                task_type = 'code-document'
+            elif title.startswith('Code task: Fix lint'):
+                task_type = 'code-fix-lint'
+            elif title.startswith('Code task: Generate unit tests'):
+                task_type = 'code-test'
+            elif title.startswith('Code task: Refactor'):
+                task_type = 'code-refactor'
+            elif 'code-' in executor:
+                # Default code task handler for code-agent
+                task_type = 'code-generate'
             elif 'containers' in labels:
                 task_type = 'container'
             elif 'testing' in labels:
