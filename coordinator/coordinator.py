@@ -180,10 +180,16 @@ class Coordinator:
                 task_type = 'task'
         
         # Prepare payload
+        params = task.get('params', {})
+        
+        # For code-generation tasks, use description as spec if not provided
+        if task_type == 'code-generate' and 'spec' not in params:
+            params['spec'] = task.get('description', task.get('title', ''))
+        
         payload = {
             'task_id': task.get('id'),
             'type': task_type,
-            'params': task.get('params', {}),
+            'params': params,
         }
         
         try:
@@ -198,6 +204,9 @@ class Coordinator:
             if response.ok:
                 result = response.json()
                 logger.info(f"Task {task.get('id')} completed: {result.get('status')}")
+                # Log full result including generated code/output
+                if result.get('output'):
+                    logger.info(f"Output:\n{result.get('output')}")
                 return result
             else:
                 logger.error(f"Executor returned {response.status_code}: {response.text}")
