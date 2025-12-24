@@ -340,35 +340,52 @@ Respond with a JSON object containing:
                 'task_id': task.get('id')
             }
     
-    def save_artifact(self, task_id: str, output: str) -> Optional[str]:
+    def save_artifact(self, task_id: str, output: str, task: Dict[str, Any] = None) -> Optional[str]:
         """
-        Save generated code/output to artifacts directory.
+        Save generated code/output to specified location or artifacts directory.
         
         Args:
             task_id: Beads task ID
             output: Generated code/output
+            task: Task dict (to extract output path if specified)
         
         Returns:
             Path to saved file or None if failed
         """
         try:
             import os
-            artifacts_dir = '/tmp/yggdrasil-artifacts'
-            os.makedirs(artifacts_dir, exist_ok=True)
+            import re
             
-            # Determine file extension based on content
-            ext = '.txt'
-            if output.startswith('<!DOCTYPE') or output.startswith('<html'):
-                ext = '.html'
-            elif output.startswith('def ') or output.startswith('import ') or output.startswith('class '):
-                ext = '.py'
-            elif output.startswith('{') or output.startswith('['):
-                ext = '.json'
-            elif output.startswith('#!/bin/bash') or output.startswith('#!/bin/sh'):
-                ext = '.sh'
+            # Check if task description specifies output path
+            output_path = None
+            if task and task.get('description'):
+                match = re.search(r'Output path:\s*(.+?)(?:\n|$)', task['description'])
+                if match:
+                    output_path = match.group(1).strip()
             
-            filename = f"{task_id}{ext}"
-            filepath = os.path.join(artifacts_dir, filename)
+            if output_path:
+                # Use specified output path
+                output_path = os.path.expanduser(output_path)
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                filepath = output_path
+            else:
+                # Use default artifacts directory
+                artifacts_dir = '/tmp/yggdrasil-artifacts'
+                os.makedirs(artifacts_dir, exist_ok=True)
+                
+                # Determine file extension based on content
+                ext = '.txt'
+                if output.startswith('<!DOCTYPE') or output.startswith('<html'):
+                    ext = '.html'
+                elif output.startswith('def ') or output.startswith('import ') or output.startswith('class '):
+                    ext = '.py'
+                elif output.startswith('{') or output.startswith('['):
+                    ext = '.json'
+                elif output.startswith('#!/bin/bash') or output.startswith('#!/bin/sh'):
+                    ext = '.sh'
+                
+                filename = f"{task_id}{ext}"
+                filepath = os.path.join(artifacts_dir, filename)
             
             with open(filepath, 'w') as f:
                 f.write(output)
@@ -379,13 +396,14 @@ Respond with a JSON object containing:
             logger.error(f"Failed to save artifact: {e}")
             return None
     
-    def sync_result_to_beads(self, task_id: str, result: Dict[str, Any]):
+    def sync_result_to_beads(self, task_id: str, result: Dict[str, Any], task: Dict[str, Any] = None):
         """
         Update Beads with task result by modifying the issues.jsonl file directly.
         
         Args:
             task_id: Beads task ID
             result: Result dict from executor
+            task: Task dict (to extract output path if specified)
         """
         status = result.get('status')
         
@@ -399,7 +417,7 @@ Respond with a JSON object containing:
         # Save artifact if there's output
         if result.get('output'):
             logger.info(f"Result has output, attempting to save...")
-            self.save_artifact(task_id, result.get('output'))
+            self.save_artifact(task_id, result.get('output'), task)
         else:
             logger.info(f"No output in result: {result.keys()}")
         
@@ -494,7 +512,7 @@ Respond with a JSON object containing:
                 result = self.dispatch_task(task, executor)
                 
                 # Sync result back to Beads
-                self.sync_result_to_beads(task_id, result)
+                self.sync_result_to_beads(task_id, result, task)
                 
                 # Short sleep before next task
                 time.sleep(5)
