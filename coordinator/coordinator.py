@@ -45,12 +45,14 @@ class Coordinator:
         'fenrir-executor': 'fenrir.nessie-hippocampus.ts.net:5000',
         'surtr-executor': 'surtr.nessie-hippocampus.ts.net:5000',
         'code-agent': 'surtr.nessie-hippocampus.ts.net:5001',
+        'text-agent': 'surtr.nessie-hippocampus.ts.net:5002',
         'huginn-executor': 'huginn.nessie-hippocampus.ts.net:5000',
     }
     
     # Task type → executor routing
     ROUTING = {
         'code-': 'code-agent',
+        'text-': 'text-agent',
         'dev-': 'fenrir-executor',
         'git-': 'fenrir-executor',
         'llm-': 'surtr-executor',
@@ -217,6 +219,8 @@ Respond with a JSON object containing:
         # Route by label
         if 'code-generation' in labels:
             return 'code-agent'
+        if 'text-processing' in labels:
+            return 'text-agent'
         
         # Route by task type prefix
         for prefix, executor in self.ROUTING.items():
