@@ -17,7 +17,7 @@ import threading
 import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-from flask import Flask, jsonify
+from flask import Flask, jsonify, send_file, send_from_directory
 
 # Claude integration
 try:
@@ -30,7 +30,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [Coordinator] %(levelname)s: %(message)s',
     handlers=[
-        logging.FileHandler('/var/log/yggdrasil-coordinator.log'),
+        logging.FileHandler('/tmp/yggdrasil-coordinator.log'),
         logging.StreamHandler()
     ]
 )
@@ -60,7 +60,7 @@ class Coordinator:
         'plan-': 'fenrir-executor',
     }
     
-    def __init__(self, beads_repo: str = '/app/yggdrasil-beads'):
+    def __init__(self, beads_repo: str = '/tmp/ygg-beads'):
         self.beads_repo = beads_repo
         self.default_executor = 'surtr-executor'
         self.retry_limit = 3
@@ -340,6 +340,45 @@ Respond with a JSON object containing:
                 'task_id': task.get('id')
             }
     
+    def save_artifact(self, task_id: str, output: str) -> Optional[str]:
+        """
+        Save generated code/output to artifacts directory.
+        
+        Args:
+            task_id: Beads task ID
+            output: Generated code/output
+        
+        Returns:
+            Path to saved file or None if failed
+        """
+        try:
+            import os
+            artifacts_dir = '/tmp/yggdrasil-artifacts'
+            os.makedirs(artifacts_dir, exist_ok=True)
+            
+            # Determine file extension based on content
+            ext = '.txt'
+            if output.startswith('<!DOCTYPE') or output.startswith('<html'):
+                ext = '.html'
+            elif output.startswith('def ') or output.startswith('import ') or output.startswith('class '):
+                ext = '.py'
+            elif output.startswith('{') or output.startswith('['):
+                ext = '.json'
+            elif output.startswith('#!/bin/bash') or output.startswith('#!/bin/sh'):
+                ext = '.sh'
+            
+            filename = f"{task_id}{ext}"
+            filepath = os.path.join(artifacts_dir, filename)
+            
+            with open(filepath, 'w') as f:
+                f.write(output)
+            
+            logger.info(f"Saved artifact to {filepath}")
+            return filepath
+        except Exception as e:
+            logger.error(f"Failed to save artifact: {e}")
+            return None
+    
     def sync_result_to_beads(self, task_id: str, result: Dict[str, Any]):
         """
         Update Beads with task result by modifying the issues.jsonl file directly.
@@ -356,6 +395,13 @@ Respond with a JSON object containing:
             beads_status = 'blocked'
         else:
             beads_status = 'open'
+        
+        # Save artifact if there's output
+        if result.get('output'):
+            logger.info(f"Result has output, attempting to save...")
+            self.save_artifact(task_id, result.get('output'))
+        else:
+            logger.info(f"No output in result: {result.keys()}")
         
         try:
             import os
@@ -465,7 +511,7 @@ Respond with a JSON object containing:
 def main():
     """Run the coordinator"""
     import os
-    beads_repo = os.environ.get('BEADS_REPO', '/app/yggdrasil-beads')
+    beads_repo = os.environ.get('BEADS_REPO', '/tmp/ygg-beads')
     coordinator = Coordinator(beads_repo=beads_repo)
     
     # Create Flask app for status endpoint
@@ -483,6 +529,34 @@ def main():
                 'fenrir-executor': {'status': 'healthy'}
             }
         })
+    
+    @app.route('/files')
+    def list_files():
+        """List all generated artifacts"""
+        import os
+        artifacts_dir = '/tmp/yggdrasil-artifacts'
+        try:
+            files = []
+            if os.path.exists(artifacts_dir):
+                for fname in sorted(os.listdir(artifacts_dir)):
+                    fpath = os.path.join(artifacts_dir, fname)
+                    if os.path.isfile(fpath):
+                        stat = os.stat(fpath)
+                        files.append({
+                            'name': fname,
+                            'size': stat.st_size,
+                            'modified': datetime.fromtimestamp(stat.st_mtime).isoformat()
+                        })
+            return jsonify({'files': files})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+    
+    @app.route('/files/<path:filename>')
+    def get_file(filename):
+        """Serve a generated artifact"""
+        artifacts_dir = '/tmp/yggdrasil-artifacts'
+        return send_from_directory(artifacts_dir, filename)
+    
     
     # Start Flask in background thread
     def run_flask():
