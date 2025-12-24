@@ -34,22 +34,23 @@ class Coordinator:
     EXECUTORS = {
         'fenrir-executor': 'fenrir.nessie-hippocampus.ts.net:5000',
         'surtr-executor': 'surtr.nessie-hippocampus.ts.net:5000',
+        'code-agent': 'surtr.nessie-hippocampus.ts.net:5001',
         'huginn-executor': 'huginn.nessie-hippocampus.ts.net:5000',
     }
     
     # Task type → executor routing
     ROUTING = {
+        'code-': 'code-agent',
         'dev-': 'fenrir-executor',
-        'code-': 'fenrir-executor',
         'git-': 'fenrir-executor',
         'llm-': 'surtr-executor',
         'ollama-': 'surtr-executor',
         'ops-': 'huginn-executor',
         'power-': 'huginn-executor',
-        'plan-': 'fenrir-executor',  # Or surtr
+        'plan-': 'fenrir-executor',
     }
     
-    def __init__(self, beads_repo: str = '~/homelab-config/yggdrasil-beads'):
+    def __init__(self, beads_repo: str = '/app/yggdrasil-beads'):
         self.beads_repo = beads_repo
         self.default_executor = 'surtr-executor'
         self.retry_limit = 3
@@ -57,38 +58,35 @@ class Coordinator:
     
     def get_ready_tasks(self) -> List[Dict[str, Any]]:
         """
-        Query Beads for ready work.
+        Query Beads for ready work by reading .beads/issues.jsonl directly.
         
         Returns:
-            List of tasks ready to execute (from 'bd ready')
+            List of tasks ready to execute (status=open, no blockers)
         """
         try:
-            # Run bd export to get full task list
-            result = subprocess.run(
-                f'cd {self.beads_repo} && bd export',
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
+            import os
+            issues_file = os.path.expanduser(f"{self.beads_repo}/.beads/issues.jsonl")
             
-            if result.returncode != 0:
-                logger.error(f"bd export failed: {result.stderr}")
+            if not os.path.exists(issues_file):
+                logger.error(f"Beads file not found: {issues_file}")
                 return []
             
-            # Parse JSONL output
             tasks = []
-            for line in result.stdout.strip().split('\n'):
-                if line:
+            with open(issues_file, 'r') as f:
+                for line in f:
+                    if not line.strip():
+                        continue
                     try:
-                        task = json.loads(line)
-                        # Filter for open/ready tasks only
-                        if task.get('status') == 'open' and not task.get('blocked'):
-                            tasks.append(task)
-                    except json.JSONDecodeError:
-                        pass
+                        issue = json.loads(line)
+                        # Filter for open tasks with no blockers/dependencies, skip epics
+                        if issue.get('status') == 'open' and issue.get('issue_type') != 'epic':
+                            dependencies = issue.get('dependencies', [])
+                            if not dependencies:  # No blockers
+                                tasks.append(issue)
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Failed to parse JSON line: {e}")
             
-            logger.info(f"Found {len(tasks)} ready tasks")
+            logger.info(f"Found {len(tasks)} ready tasks from beads")
             return tasks
         
         except Exception as e:
@@ -106,6 +104,7 @@ class Coordinator:
             Executor name (e.g., 'fenrir-executor')
         """
         task_type = task.get('type', '')
+        title = task.get('title', '')
         labels = task.get('labels', [])
         
         # Check if task specifies preferred executor in labels
@@ -114,13 +113,27 @@ class Coordinator:
                 if label in self.EXECUTORS:
                     return label
         
+        # Route by task title prefix (e.g., "Code task:")
+        if title.startswith('Code task:'):
+            return 'code-agent'
+        
+        # Route by label
+        if 'code-generation' in labels:
+            return 'code-agent'
+        
         # Route by task type prefix
         for prefix, executor in self.ROUTING.items():
             if task_type.startswith(prefix):
                 return executor
         
-        # Default to most powerful machine
-        return self.default_executor
+        # Route by task ID prefix
+        task_id = task.get('id', '')
+        for prefix, executor in self.ROUTING.items():
+            if task_id.startswith(prefix):
+                return executor
+        
+        # Default to fenrir for dev work
+        return 'fenrir-executor'
     
     def dispatch_task(self, task: Dict[str, Any], executor: str) -> Dict[str, Any]:
         """
@@ -139,10 +152,23 @@ class Coordinator:
         
         url = f"http://{self.EXECUTORS[executor]}/execute"
         
+        # Infer task type from labels if not set
+        task_type = task.get('type')
+        if not task_type:
+            labels = task.get('labels', [])
+            if 'code-generation' in labels:
+                task_type = 'code-generation'
+            elif 'containers' in labels:
+                task_type = 'container'
+            elif 'testing' in labels:
+                task_type = 'test'
+            else:
+                task_type = 'task'
+        
         # Prepare payload
         payload = {
             'task_id': task.get('id'),
-            'type': task.get('type'),
+            'type': task_type,
             'params': task.get('params', {}),
         }
         
@@ -305,7 +331,9 @@ class Coordinator:
 
 def main():
     """Run the coordinator"""
-    coordinator = Coordinator()
+    import os
+    beads_repo = os.environ.get('BEADS_REPO', '/app/yggdrasil-beads')
+    coordinator = Coordinator(beads_repo=beads_repo)
     
     # Start in infinite loop mode
     # In production, wrap this in a systemd service
