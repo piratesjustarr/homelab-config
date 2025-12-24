@@ -60,7 +60,7 @@ class Coordinator:
         'plan-': 'fenrir-executor',
     }
     
-    def __init__(self, beads_repo: str = '/tmp/ygg-beads'):
+    def __init__(self, beads_repo: str = '/app/beads'):
         self.beads_repo = beads_repo
         self.default_executor = 'surtr-executor'
         self.retry_limit = 3
@@ -511,7 +511,7 @@ Respond with a JSON object containing:
 def main():
     """Run the coordinator"""
     import os
-    beads_repo = os.environ.get('BEADS_REPO', '/tmp/ygg-beads')
+    beads_repo = os.environ.get('BEADS_REPO', '/app/beads')
     coordinator = Coordinator(beads_repo=beads_repo)
     
     # Create Flask app for status endpoint
