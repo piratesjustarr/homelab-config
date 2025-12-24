@@ -17,7 +17,7 @@ Handlers:
 
 import sys
 import os
-sys.path.insert(0, '/var/home/matt/homelab-config')
+sys.path.insert(0, '/app')
 
 from agents.base_agent import AgentExecutor
 import logging
