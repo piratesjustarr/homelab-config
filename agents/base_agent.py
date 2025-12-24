@@ -100,8 +100,12 @@ class AgentExecutor(ABC):
     def handle_execute_request(self) -> Tuple[Dict[str, Any], int]:
         """HTTP handler for /execute endpoint"""
         
+        task = None
         try:
-            task = request.get_json()
+            logger.info(f"Request headers: {dict(request.headers)}")
+            logger.info(f"Request content-type: {request.content_type}")
+            logger.info(f"Request data (raw): {request.data}")
+            task = request.get_json(force=True)
             
             if not task:
                 return jsonify({'error': 'No task provided'}), 400
@@ -141,8 +145,9 @@ class AgentExecutor(ABC):
         
         except Exception as e:
             logger.exception(f"Task execution failed: {e}")
+            task_id = task.get('task_id', 'unknown') if task else 'unknown'
             return jsonify({
-                'task_id': task.get('task_id', 'unknown'),
+                'task_id': task_id,
                 'status': 'error',
                 'error': str(e),
                 'timestamp': datetime.now().isoformat()

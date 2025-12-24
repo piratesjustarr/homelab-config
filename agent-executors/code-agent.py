@@ -16,6 +16,7 @@ Handlers:
 """
 
 import sys
+import os
 sys.path.insert(0, '/var/home/matt/homelab-config')
 
 from agents.base_agent import AgentExecutor
@@ -34,32 +35,32 @@ class CodeLLMAgent(AgentExecutor):
     
     def __init__(self):
         super().__init__()
-        # Initialize Ollama client (optional)
-        self.ollama = None
-        self.model = None
-        try:
-            import ollama
-            self.ollama = ollama
-            # Try to detect available model, default to qwen
-            self.model = self._detect_model()
-            logger.info(f"Code agent initialized with model: {self.model}")
-        except ImportError:
-            logger.warning("Ollama library not available; using fallback mode with curl")
-            self.model = "qwen2.5-coder:3b"
+        # LLM endpoint config
+        self.llm_host = os.environ.get('LLM_HOST', 'localhost:8080')
+        self.model = os.environ.get('LLM_MODEL', 'granite-code:8b')
+        logger.info(f"Code agent initialized: {self.llm_host} / {self.model}")
     
-    def _detect_model(self):
-        """Detect available code model"""
+    def _llm_generate(self, prompt: str, temperature: float = 0.7) -> str:
+        """Call LLM (ramalama/ollama) for code generation using OpenAI-compatible API"""
+        import requests
+        
+        url = f"http://{self.llm_host}/v1/chat/completions"
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": temperature,
+            "stream": False
+        }
+        
         try:
-            # Try to list models via curl (works even if python ollama library missing)
-            result = self.run_command(
-                "curl -s http://localhost:11434/api/tags | jq -r '.models[0].name' 2>/dev/null || echo 'qwen2.5-coder:3b'",
-                timeout=5
-            )
-            model = result['output'].strip()
-            return model if model else "qwen2.5-coder:3b"
-        except Exception:
-            return "qwen2.5-coder:3b"
-    
+            response = requests.post(url, json=payload, timeout=120)
+            response.raise_for_status()
+            data = response.json()
+            return data.get('choices', [{}])[0].get('message', {}).get('content', '')
+        except Exception as e:
+            logger.error(f"LLM request failed: {e}")
+            return ''
+
     def register_handlers(self):
         """Register code-specific handlers"""
         self.task_handlers = {
@@ -71,24 +72,8 @@ class CodeLLMAgent(AgentExecutor):
         }
     
     def _ollama_generate(self, prompt: str, temperature: float = 0.7) -> str:
-        """Call Ollama for code generation"""
-        if self.ollama:
-            try:
-                response = self.ollama.generate(
-                    model=self.model,
-                    prompt=prompt,
-                    stream=False,
-                    options={'temperature': temperature}
-                )
-                return response.get('response', '')
-            except Exception as e:
-                logger.error(f"Ollama generate failed: {e}, using curl fallback")
-        
-        # Fallback: use curl
-        escaped_prompt = prompt.replace('"', '\\"').replace('\n', '\\n')
-        cmd = f'curl -s http://localhost:11434/api/generate -X POST -d \'{{"model": "{self.model}", "prompt": "{escaped_prompt}", "stream": false}}\' | jq -r ".response"'
-        result = self.run_command(cmd, timeout=120)
-        return result['output'].strip() if result['success'] else ''
+        """Deprecated: use _llm_generate instead"""
+        return self._llm_generate(prompt, temperature)
     
     def handle_code_generate(self, params):
         """Generate new code from specification"""
@@ -98,13 +83,9 @@ class CodeLLMAgent(AgentExecutor):
         if not spec:
             return {'output': 'Error: spec required', 'success': False}
         
-        prompt = f"""Generate {language} code for this specification:
-
-{spec}
-
-Return only the code, no explanation."""
+        prompt = f"Generate {language} code for this specification:\n\n{spec}\n\nReturn only the code, no explanation."""
         
-        code = self._ollama_generate(prompt, temperature=0.5)
+        code = self._llm_generate(prompt, temperature=0.5)
         
         if not code:
             return {'output': 'Error: Failed to generate code', 'success': False}
