@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+
+import sys
+import os
+sys.path.insert(0, '/app')
+
+from agents.base_agent import AgentExecutor
+import logging
+import json
+import subprocess
+
 """
 Code LLM Agent
 
@@ -14,15 +24,6 @@ Handlers:
   code-document    → Add docstrings + comments
   code-fix-lint    → Auto-fix linting errors
 """
-
-import sys
-import os
-sys.path.insert(0, '/app')
-
-from agents.base_agent import AgentExecutor
-import logging
-import json
-import subprocess
 
 logger = logging.getLogger(__name__)
 

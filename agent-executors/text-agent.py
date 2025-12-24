@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+
+import sys
+import os
+sys.path.insert(0, '/app')
+
+from agents.base_agent import AgentExecutor
+import logging
+import json
+import subprocess
+
 """
 Text LLM Agent
 
@@ -14,15 +24,6 @@ Handlers:
   text-rewrite     → Improve/rewrite text
   text-analyze     → Analyze sentiment/content/themes
 """
-
-import sys
-import os
-sys.path.insert(0, '/app')
-
-from agents.base_agent import AgentExecutor
-import logging
-import json
-import subprocess
 
 logger = logging.getLogger(__name__)
 
