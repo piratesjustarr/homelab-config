@@ -14,9 +14,17 @@ import requests
 import time
 import logging
 import threading
+import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from flask import Flask, jsonify
+
+# Claude integration
+try:
+    from anthropic import Anthropic
+    HAS_CLAUDE = True
+except ImportError:
+    HAS_CLAUDE = False
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,6 +65,89 @@ class Coordinator:
         self.default_executor = 'surtr-executor'
         self.retry_limit = 3
         self.task_timeout = 600  # 10 minutes default
+        
+        # Initialize Claude if available
+        self.claude = None
+        if HAS_CLAUDE:
+            logger.info("Anthropic library available, trying to initialize Claude...")
+            api_key = os.environ.get('ANTHROPIC_API_KEY')
+            
+            # If not in env, try to read from crush config
+            if not api_key:
+                try:
+                    import json as json_lib
+                    config_path = os.path.expanduser('~/.local/share/crush/crush.json')
+                    logger.info(f"Reading API key from {config_path}")
+                    with open(config_path) as f:
+                        config = json_lib.load(f)
+                        api_key = config.get('providers', {}).get('anthropic', {}).get('api_key')
+                        if api_key:
+                            logger.info("Found Anthropic API key in crush config")
+                except Exception as e:
+                    logger.warning(f"Failed to read crush config: {e}")
+            
+            if api_key:
+                try:
+                    self.claude = Anthropic(api_key=api_key)
+                    logger.info("Claude initialized with Anthropic API")
+                except Exception as e:
+                    logger.error(f"Failed to initialize Anthropic client: {e}")
+            else:
+                logger.warning("No Anthropic API key found")
+        else:
+            logger.warning("Anthropic library not available")
+    
+    def ask_claude(self, task: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Ask Claude what to do with an unknown task type.
+        Returns result or None if Claude unavailable.
+        """
+        if not self.claude:
+            return None
+        
+        try:
+            prompt = f"""You are an intelligent task executor. A task needs to be handled:
+
+Task ID: {task.get('id')}
+Title: {task.get('title')}
+Description: {task.get('description')}
+Labels: {task.get('labels', [])}
+
+The task couldn't be routed to a known executor. What should be done?
+
+Respond with a JSON object containing:
+- "action": what to do (e.g., "skip", "close", "integrate_code", "save_file", "run_test")
+- "result": the result of performing that action
+- "success": true/false
+- "details": any details about what was done
+"""
+            
+            message = self.claude.messages.create(
+                model="claude-3-haiku-20240307",  # or claude-3-haiku-20240307, claude-3-sonnet-20240229, etc.
+                max_tokens=1024,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            response_text = message.content[0].text
+            
+            # Try to parse JSON from response
+            try:
+                result = json.loads(response_text)
+            except:
+                # If not JSON, wrap the response
+                result = {
+                    "action": "review",
+                    "result": response_text,
+                    "success": True,
+                    "details": "Claude reviewed the task"
+                }
+            
+            logger.info(f"Claude handled {task.get('id')}: {result.get('action')}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Claude error: {e}")
+            return None
     
     def get_ready_tasks(self) -> List[Dict[str, Any]]:
         """
@@ -149,7 +240,12 @@ class Coordinator:
             Result dict from executor
         """
         if executor not in self.EXECUTORS:
-            logger.error(f"Unknown executor: {executor}")
+            # Unknown executor - ask Claude what to do
+            logger.warning(f"Unknown executor: {executor}, asking Claude...")
+            result = self.ask_claude(task)
+            if result:
+                return result
+            logger.error(f"Unknown executor and Claude unavailable: {executor}")
             return {'status': 'error', 'error': 'Unknown executor'}
         
         url = f"http://{self.EXECUTORS[executor]}/execute"
@@ -211,7 +307,13 @@ class Coordinator:
                     logger.info(f"Output:\n{result.get('output')}")
                 return result
             else:
-                logger.error(f"Executor returned {response.status_code}: {response.text}")
+                # Executor error - try Claude
+                logger.warning(f"Executor returned {response.status_code}: {response.text}, asking Claude...")
+                result = self.ask_claude(task)
+                if result:
+                    return result
+                
+                logger.error(f"Executor failed and Claude unavailable")
                 return {
                     'status': 'error',
                     'error': f"HTTP {response.status_code}",
