@@ -13,8 +13,10 @@ import json
 import requests
 import time
 import logging
+import threading
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from flask import Flask, jsonify
 
 logging.basicConfig(
     level=logging.INFO,
@@ -358,8 +360,36 @@ def main():
     beads_repo = os.environ.get('BEADS_REPO', '/app/yggdrasil-beads')
     coordinator = Coordinator(beads_repo=beads_repo)
     
-    # Start in infinite loop mode
-    # In production, wrap this in a systemd service
+    # Create Flask app for status endpoint
+    app = Flask(__name__)
+    
+    @app.route('/status')
+    def status():
+        """Return health status of all components"""
+        import sys
+        sys.path.insert(0, '/app')
+        from agent_executors.health_aggregator import HealthAggregator
+        
+        try:
+            agg = HealthAggregator({
+                'coordinator': 'localhost:5000',
+                'code-agent': 'surtr.nessie-hippocampus.ts.net:5001',
+                'fenrir-executor': 'fenrir.nessie-hippocampus.ts.net:5000',
+            })
+            return jsonify(agg.query_all())
+        except Exception as e:
+            logger.error(f"Status endpoint error: {e}", exc_info=True)
+            return jsonify({'error': str(e)}), 500
+    
+    # Start Flask in background thread
+    def run_flask():
+        logger.info("Starting Flask status endpoint on :5000")
+        app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+    
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    
+    # Start coordinator loop in main thread
     logger.info("Starting Yggdrasil Coordinator")
     coordinator.run_loop(poll_interval=30)
 
