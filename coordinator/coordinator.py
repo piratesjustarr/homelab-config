@@ -66,6 +66,10 @@ class Coordinator:
         self.retry_limit = 3
         self.task_timeout = 600  # 10 minutes default
         
+        # Beads cache
+        self.beads_cache = {}
+        self.beads_mtime = None
+        
         # Initialize Claude if available
         self.claude = None
         if HAS_CLAUDE:
@@ -338,7 +342,7 @@ Respond with a JSON object containing:
     
     def sync_result_to_beads(self, task_id: str, result: Dict[str, Any]):
         """
-        Update Beads with task result.
+        Update Beads with task result by modifying the issues.jsonl file directly.
         
         Args:
             task_id: Beads task ID
@@ -353,32 +357,34 @@ Respond with a JSON object containing:
         else:
             beads_status = 'open'
         
-        # Capture output for debugging
-        output = result.get('output', '')
-        output_summary = output[:500] if output else ''
-        
         try:
-            # Update Beads
-            update_cmd = (
-                f'cd {self.beads_repo} && '
-                f'bd update {task_id} --status {beads_status}'
-            )
+            import os
+            issues_file = os.path.expanduser(f"{self.beads_repo}/.beads/issues.jsonl")
             
-            result = subprocess.run(
-                update_cmd,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
+            # Read all tasks
+            tasks = []
+            with open(issues_file, 'r') as f:
+                for line in f:
+                    if line.strip():
+                        task = json.loads(line)
+                        # Update the target task
+                        if task.get('id') == task_id:
+                            task['status'] = beads_status
+                            if beads_status == 'closed':
+                                task['closed_at'] = datetime.now().isoformat() + 'Z'
+                            logger.info(f"Updated {task_id} status to {beads_status}")
+                        tasks.append(task)
             
-            if result.returncode == 0:
-                logger.info(f"Updated {task_id} → {beads_status}")
-            else:
-                logger.error(f"Failed to update {task_id}: {result.stderr}")
-        
+            # Write back
+            with open(issues_file, 'w') as f:
+                for task in tasks:
+                    f.write(json.dumps(task) + '\n')
+            
+            logger.info(f"Synced {task_id} to beads")
+            
         except Exception as e:
-            logger.error(f"Failed to sync result: {e}")
+            logger.error(f"Failed to update beads: {e}")
+
     
     def check_executor_health(self, executor: str) -> bool:
         """
