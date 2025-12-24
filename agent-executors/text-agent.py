@@ -263,4 +263,4 @@ Analysis:"""
 
 if __name__ == '__main__':
     agent = TextLLMAgent()
-    agent.start(port=5002)
+    agent.run(port=5002)
