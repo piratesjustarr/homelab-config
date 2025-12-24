@@ -83,7 +83,19 @@ class CodeLLMAgent(AgentExecutor):
         if not spec:
             return {'output': 'Error: spec required', 'success': False}
         
-        prompt = f"Generate {language} code for this specification:\n\n{spec}\n\nReturn only the code, no explanation."""
+        prompt = f"""You are an expert {language} developer. Generate {language} code that implements the following specification:
+
+{spec}
+
+Guidelines:
+- Write clean, well-structured code
+- Include necessary imports
+- Add docstrings and comments
+- Use type hints (for Python)
+- Follow best practices for {language}
+- Return only the code, no explanations or markdown formatting
+
+Code:"""
         
         code = self._llm_generate(prompt, temperature=0.5)
         
