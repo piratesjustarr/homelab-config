@@ -53,6 +53,16 @@ podman build \
 
 echo -e "$GREEN"✓ Built code agent"$NC"
 
+# Build text agent
+echo -e "$BLUE"Building text agent..."$NC"
+podman build \
+    -t "$REGISTRY/yggdrasil-text-agent:$VERSION" \
+    -t "$REGISTRY/yggdrasil-text-agent:latest" \
+    -f "$BUILD_DIR/docker/Dockerfile.text-agent" \
+    "$BUILD_DIR"
+
+echo -e "$GREEN"✓ Built text agent"$NC"
+
 # Push to registry if not localhost
 if test "$REGISTRY" != "localhost:5000"
     echo -e "$BLUE"Pushing images to $REGISTRY..."$NC"
@@ -63,6 +73,8 @@ if test "$REGISTRY" != "localhost:5000"
     podman push $PUSH_OPTS "$REGISTRY/yggdrasil-coordinator:latest"
     podman push $PUSH_OPTS "$REGISTRY/yggdrasil-code-agent:$VERSION"
     podman push $PUSH_OPTS "$REGISTRY/yggdrasil-code-agent:latest"
+    podman push $PUSH_OPTS "$REGISTRY/yggdrasil-text-agent:$VERSION"
+    podman push $PUSH_OPTS "$REGISTRY/yggdrasil-text-agent:latest"
     echo -e "$GREEN"✓ Pushed to registry"$NC"
 end
 
@@ -72,3 +84,4 @@ echo "Next steps:"
 echo "1. Deploy registry: ./scripts/deploy-registry.sh"
 echo "2. Deploy executors: ./scripts/deploy-executors.sh"
 echo "3. Deploy code agent: ./scripts/deploy-code-agent.sh"
+echo "4. Deploy text agent: ./scripts/deploy-text-agent.sh"
