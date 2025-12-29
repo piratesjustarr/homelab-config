@@ -27,15 +27,16 @@ logger = logging.getLogger(__name__)
 
 
 class LLMClient:
-    """Unified LLM client with local-first, cloud fallback"""
+    """Unified LLM client with router-based host selection and cloud fallback"""
     
     def __init__(self):
-        # Local LLM (Ollama on Surtr via Tailscale)
-        self.local_host = os.environ.get('OLLAMA_HOST', 'surtr.nessie-hippocampus.ts.net:8080')
-        self.local_code_model = 'library/granite-code'  # As shown by ramalama
-        self.local_chat_model = 'library/granite-code'  # Use same for now (only model loaded)
+        # Load router for host discovery
+        from llm_router import LLMRouter
+        self.router = LLMRouter()
+        self.router.load_config()
+        self.router.health_check()
         
-        # Cloud fallback (Anthropic)
+        # Cloud fallback
         self.anthropic_key = self._load_anthropic_key()
         self.cloud_model = 'claude-sonnet-4-20250514'
         
@@ -56,9 +57,9 @@ class LLMClient:
                 logger.warning(f"Failed to read crush config: {e}")
         return None
     
-    def _call_local_llm(self, prompt: str, model: str, system: str = None) -> Optional[str]:
+    def _call_local_llm(self, prompt: str, api_base: str, model: str, system: str = None) -> Optional[str]:
         """Call local LLM via OpenAI-compatible API (ramalama/llama.cpp)"""
-        url = f'http://{self.local_host}/v1/completions'
+        url = f'{api_base}/completions'
         
         # Combine system prompt if provided
         full_prompt = f"{system}\n\n{prompt}" if system else prompt
@@ -115,20 +116,27 @@ class LLMClient:
             return None
     
     def generate(self, prompt: str, task_type: str = 'general', system: str = None) -> str:
-        """Generate response with local-first, cloud fallback"""
+        """Generate response with router-based host selection and cloud fallback"""
         
-        # Choose model based on task type
-        if task_type in ('code', 'code-generation', 'code-review', 'code-fix'):
-            local_model = self.local_code_model
-        else:
-            local_model = self.local_chat_model
+        # Get best host for this task type
+        host = self.router.get_host_for_task(task_type)
         
-        # Try local first
-        logger.info(f"Trying local LLM ({local_model})...")
-        result = self._call_local_llm(prompt, local_model, system)
-        if result:
-            logger.info("Local LLM succeeded")
-            return result
+        if host:
+            logger.info(f"Trying {host.name} ({host.model})...")
+            result = self._call_local_llm(prompt, host.api_base, host.model, system)
+            if result:
+                logger.info(f"Local LLM ({host.name}) succeeded")
+                return result
+            
+            # Mark host as unhealthy and try to find another
+            host.healthy = False
+            host = self.router.get_host_for_task(task_type)
+            if host:
+                logger.info(f"Trying backup: {host.name} ({host.model})...")
+                result = self._call_local_llm(prompt, host.api_base, host.model, system)
+                if result:
+                    logger.info(f"Backup LLM ({host.name}) succeeded")
+                    return result
         
         # Fall back to cloud
         logger.info("Falling back to cloud (Anthropic)...")
@@ -137,7 +145,7 @@ class LLMClient:
             logger.info("Cloud LLM succeeded")
             return result
         
-        return "ERROR: Both local and cloud LLM failed"
+        return "ERROR: All LLM hosts and cloud fallback failed"
 
 
 class BeadsClient:

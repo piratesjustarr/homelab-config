@@ -73,12 +73,20 @@ def sync(vault, beads, dry_run):
 def status():
     """Check system health"""
     from beads_sync import get_beads_stats
+    from llm_router import check_llm_health
     
     click.echo("=== Yggdrasil Status ===\n")
     
     # Beads
     stats = get_beads_stats()
     click.echo(f"Beads: {stats['open']} open, {stats['in_progress']} processing, {stats['closed']} completed")
+    
+    # LLM Health
+    click.echo("\nLLM Hosts:")
+    health = check_llm_health()
+    for name, info in health.items():
+        status_str = "✓" if info['healthy'] else "✗"
+        click.echo(f"  {status_str} {name}: {info['status']} ({info.get('model', 'n/a')})")
     
     click.echo()
 
