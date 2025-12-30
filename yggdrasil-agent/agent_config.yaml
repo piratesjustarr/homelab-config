@@ -1,0 +1,446 @@
+I'll help you create the YAML configuration file and modify the agent code to use it. Here's the complete implementation:
+
+## 1. First, create the YAML configuration file:
+
+**File: `/var/home/matt/homelab-config/yggdrasil-agent/agent_config.yaml`**
+
+```yaml
+# Yggdrasil Agent Configuration
+# This file contains all configurable settings for the agent
+
+llm:
+  # Timeout for LLM API calls in seconds
+  timeout_seconds: 120
+  
+  # Maximum number of retries for failed LLM calls
+  max_retries: 3
+  
+  # Model specifications for different task types
+  models:
+    # Model for code generation and analysis tasks
+    code: "granite-code:8b"
+    
+    # Model for reasoning and complex problem solving
+    reasoning: "gpt-oss:20b"
+    
+    # Model for general text processing
+    text: "qwen2.5:7b"
+  
+  # Cloud fallback model when local models fail
+  cloud_fallback: "anthropic:claude-sonnet-4-20250514"
+
+storage:
+  # Maximum characters for result truncation
+  result_max_chars: 32000
+  
+  # Base directory for agent outputs
+  output_base_dir: "/home/matt/yggdrasil-outputs"
+
+task_processing:
+  # How often to poll for new tasks (seconds)
+  poll_interval_seconds: 30
+  
+  # Number of tasks to process in each batch
+  batch_size: 1
+  
+  # Whether to automatically apply suggested changes
+  enable_auto_apply: false
+```
+
+## 2. Create a configuration loader module:
+
+**File: `config_loader.py`**
+
+```python
+"""
+Configuration loader for Yggdrasil Agent
+Handles loading and validation of agent_config.yaml
+"""
+
+import yaml
+import os
+import logging
+from typing import Dict, Any, Optional
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+class AgentConfig:
+    """Configuration manager for Yggdrasil Agent"""
+    
+    def __init__(self, config_path: Optional[str] = None):
+        """
+        Initialize configuration loader
+        
+        Args:
+            config_path: Path to config file. If None, uses default locations.
+        """
+        self.config_path = config_path or self._find_config_file()
+        self.config = self._load_config()
+        self._validate_config()
+    
+    def _find_config_file(self) -> str:
+        """Find the configuration file in common locations"""
+        possible_paths = [
+            "/var/home/matt/homelab-config/yggdrasil-agent/agent_config.yaml",
+            "./agent_config.yaml",
+            "~/yggdrasil-agent/agent_config.yaml",
+            "/etc/yggdrasil-agent/agent_config.yaml"
+        ]
+        
+        for path in possible_paths:
+            expanded_path = os.path.expanduser(path)
+            if os.path.exists(expanded_path):
+                logger.info(f"Found config file at: {expanded_path}")
+                return expanded_path
+        
+        # If no config found, create default
+        default_path = "./agent_config.yaml"
+        logger.warning(f"No config file found, creating default at: {default_path}")
+        self._create_default_config(default_path)
+        return default_path
+    
+    def _create_default_config(self, path: str):
+        """Create a default configuration file"""
+        default_config = {
+            'llm': {
+                'timeout_seconds': 120,
+                'max_retries': 3,
+                'models': {
+                    'code': 'granite-code:8b',
+                    'reasoning': 'gpt-oss:20b',
+                    'text': 'qwen2.5:7b'
+                },
+                'cloud_fallback': 'anthropic:claude-sonnet-4-20250514'
+            },
+            'storage': {
+                'result_max_chars': 32000,
+                'output_base_dir': '/home/matt/yggdrasil-outputs'
+            },
+            'task_processing': {
+                'poll_interval_seconds': 30,
+                'batch_size': 1,
+                'enable_auto_apply': False
+            }
+        }
+        
+        try:
+            with open(path, 'w') as f:
+                yaml.dump(default_config, f, default_flow_style=False, indent=2)
+            logger.info(f"Created default config file at: {path}")
+        except Exception as e:
+            logger.error(f"Failed to create default config: {e}")
+            raise
+    
+    def _load_config(self) -> Dict[str, Any]:
+        """Load configuration from YAML file"""
+        try:
+            with open(self.config_path, 'r') as f:
+                config = yaml.safe_load(f)
+            logger.info(f"Loaded configuration from: {self.config_path}")
+            return config
+        except FileNotFoundError:
+            logger.error(f"Configuration file not found: {self.config_path}")
+            raise
+        except yaml.YAMLError as e:
+            logger.error(f"Error parsing YAML config: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error loading config: {e}")
+            raise
+    
+    def _validate_config(self):
+        """Validate configuration structure and required fields"""
+        required_sections = ['llm', 'storage', 'task_processing']
+        
+        for section in required_sections:
+            if section not in self.config:
+                raise ValueError(f"Missing required config section: {section}")
+        
+        # Validate LLM section
+        llm_config = self.config['llm']
+        required_llm_fields = ['timeout_seconds', 'max_retries', 'models', 'cloud_fallback']
+        for field in required_llm_fields:
+            if field not in llm_config:
+                raise ValueError(f"Missing required LLM config field: {field}")
+        
+        # Validate models subsection
+        models = llm_config['models']
+        required_model_types = ['code', 'reasoning', 'text']
+        for model_type in required_model_types:
+            if model_type not in models:
+                raise ValueError(f"Missing required model type: {model_type}")
+        
+        # Validate storage section
+        storage_config = self.config['storage']
+        if 'result_max_chars' not in storage_config:
+            raise ValueError("Missing required storage config: result_max_chars")
+        
+        # Validate task processing section
+        task_config = self.config['task_processing']
+        if 'poll_interval_seconds' not in task_config:
+            raise ValueError("Missing required task processing config: poll_interval_seconds")
+        
+        logger.info("Configuration validation passed")
+    
+    def reload(self):
+        """Reload configuration from file"""
+        logger.info("Reloading configuration...")
+        self.config = self._load_config()
+        self._validate_config()
+    
+    # Convenience methods for accessing config values
+    @property
+    def llm_timeout(self) -> int:
+        """Get LLM timeout in seconds"""
+        return self.config['llm']['timeout_seconds']
+    
+    @property
+    def llm_max_retries(self) -> int:
+        """Get maximum LLM retries"""
+        return self.config['llm']['max_retries']
+    
+    @property
+    def code_model(self) -> str:
+        """Get code generation model"""
+        return self.config['llm']['models']['code']
+    
+    @property
+    def reasoning_model(self) -> str:
+        """Get reasoning model"""
+        return self.config['llm']['models']['reasoning']
+    
+    @property
+    def text_model(self) -> str:
+        """Get text processing model"""
+        return self.config['llm']['models']['text']
+    
+    @property
+    def cloud_fallback_model(self) -> str:
+        """Get cloud fallback model"""
+        return self.config['llm']['cloud_fallback']
+    
+    @property
+    def result_max_chars(self) -> int:
+        """Get maximum characters for results"""
+        return self.config['storage']['result_max_chars']
+    
+    @property
+    def output_base_dir(self) -> str:
+        """Get base output directory"""
+        return self.config['storage']['output_base_dir']
+    
+    @property
+    def poll_interval(self) -> int:
+        """Get task polling interval in seconds"""
+        return self.config['task_processing']['poll_interval_seconds']
+    
+    @property
+    def batch_size(self) -> int:
+        """Get task batch size"""
+        return self.config['task_processing']['batch_size']
+    
+    @property
+    def auto_apply_enabled(self) -> bool:
+        """Check if auto-apply is enabled"""
+        return self.config['task_processing']['enable_auto_apply']
+    
+    def get_model_for_task(self, task_type: str) -> str:
+        """
+        Get appropriate model for a given task type
+        
+        Args:
+            task_type: Type of task ('code', 'reasoning', 'text', or specific task name)
+            
+        Returns:
+            Model name to use for the task
+        """
+        # Map specific task types to model categories
+        task_model_mapping = {
+            'code_generation': 'code',
+            'code_review': 'code',
+            'debugging': 'code',
+            'analysis': 'reasoning',
+            'planning': 'reasoning',
+            'problem_solving': 'reasoning',
+            'summarization': 'text',
+            'documentation': 'text',
+            'translation': 'text'
+        }
+        
+        # Get model category
+        model_category = task_model_mapping.get(task_type.lower(), task_type.lower())
+        
+        # Return appropriate model or fallback to text model
+        models = self.config['llm']['models']
+        return models.get(model_category, models['text'])
+
+
+# Global config instance
+_config_instance: Optional[AgentConfig] = None
+
+def get_config(config_path: Optional[str] = None) -> AgentConfig:
+    """
+    Get global configuration instance (singleton pattern)
+    
+    Args:
+        config_path: Path to config file (only used on first call)
+        
+    Returns:
+        AgentConfig instance
+    """
+    global _config_instance
+    
+    if _config_instance is None:
+        _config_instance = AgentConfig(config_path)
+    
+    return _config_instance
+
+def reload_config():
+    """Reload the global configuration"""
+    global _config_instance
+    
+    if _config_instance is not None:
+        _config_instance.reload()
+    else:
+        _config_instance = AgentConfig()
+```
+
+## 3. Modified agent.py sections:
+
+**Add these imports at the top of `agent.py`:**
+
+```python
+# Add these imports to existing imports in agent.py
+from config_loader import get_config, AgentConfig
+import yaml
+import logging
+```
+
+**Modified `__init__()` method in agent.py:**
+
+```python
+class YggdrasilAgent:
+    def __init__(self, config_path: Optional[str] = None):
+        """
+        Initialize Yggdrasil Agent with configuration
+        
+        Args:
+            config_path: Optional path to configuration file
+        """
+        # Load configuration
+        self.config = get_config(config_path)
+        
+        # Set up logging
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger(__name__)
+        
+        # Initialize with config values
+        self.result_max_chars = self.config.result_max_chars
+        self.llm_timeout = self.config.llm_timeout
+        self.max_retries = self.config.llm_max_retries
+        self.output_base_dir = Path(self.config.output_base_dir)
+        
+        # Create output directory if it doesn't exist
+        self.output_base_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize other components
+        self._initialize_llm_clients()
+        self._setup_task_processing()
+        
+        self.logger.info(f"Agent initialized with config from: {self.config.config_path}")
+        self.logger.info(f"Using models - Code: {self.config.code_model}, "
+                        f"Reasoning: {self.config.reasoning_model}, "
+                        f"Text: {self.config.text_model}")
+```
+
+**Modified `_call_local_llm()` method:**
+
+```python
+def _call_local_llm(self, prompt: str, task_type: str = "text") -> Optional[str]:
+    """
+    Call local LLM with configurable timeout and model selection
+    
+    Args:
+        prompt: The prompt to send to the LLM
+        task_type: Type of task to determine appropriate model
+        
+    Returns:
+        LLM response or None if failed
+    """
+    model = self.config.get_model_for_task(task_type)
+    
+    for attempt in range(self.config.llm_max_retries):
+        try:
+            self.logger.info(f"Calling local LLM (attempt {attempt + 1}/{self.config.llm_max_retries})")
+            self.logger.info(f"Using model: {model} for task type: {task_type}")
+            
+            # Your existing LLM call logic here, but with configurable timeout
+            response = self._make_llm_request(
+                model=model,
+                prompt=prompt,
+                timeout=self.config.llm_timeout
+            )
+            
+            if response:
+                # Truncate response based on config
+                if len(response) > self.config.result_max_chars:
+                    self.logger.warning(f"Truncating response from {len(response)} to {self.config.result_max_chars} chars")
+                    response = response[:self.config.result_max_chars] + "...[truncated]"
+                
+                return response
+                
+        except Exception as e:
+            self.logger.error(f"Local LLM call attempt {attempt + 1} failed: {e}")
+            if attempt == self.config.llm_max_retries - 1:
+                self.logger.info("All local LLM attempts failed, falling back to cloud")
+                return self._call_cloud_fallback(prompt, task_type)
+    
+    return None
+
+def _call_cloud_fallback(self, prompt: str, task_type: str = "text") -> Optional[str]:
+    """
+    Call cloud fallback model when local models fail
+    
+    Args:
+        prompt: The prompt to send to the LLM
+        task_type: Type of task (for logging)
+        
+    Returns:
+        LLM response or None if failed
+    """
+    try:
+        self.logger.info(f"Using cloud fallback model: {self.config.cloud_fallback_model}")
+        
+        # Your existing cloud LLM call logic here
+        response = self._make_cloud_llm_request(
+            model=self.config.cloud_fallback_model,
+            prompt=prompt,
+            timeout=self.config.llm_timeout
+        )
+        
+        if response and len(response) > self.config.result_max_chars:
+            self.logger.warning(f"Truncating cloud response from {len(response)} to {self.config.result_max_chars} chars")
+            response = response[:self.config.result_max_chars] + "...[truncated]"
+        
+        return response
+        
+    except Exception as e:
+        self.logger.error(f"Cloud fallback failed: {e}")
+        return None
+```
+
+**Modified main processing loop:**
+
+```python
+def run(self):
+    """Main agent processing loop using configured settings"""
+    self.logger.info("Starting Yggdrasil Agent")
+    self.logger.info(f"Poll interval: {self.config.poll_interval}s")
+    self.logger.info(f"Batch size: {self.config.batch_size}")
+    self.logger.info(f"Auto-apply enabled: {self.config.auto_apply_enabled}")
+    
+    while True:
+        try:
+            # Process tasks in batches
+            tasks =
