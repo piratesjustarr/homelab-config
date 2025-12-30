@@ -74,12 +74,52 @@ def status():
     """Check system health"""
     from beads_sync import get_beads_stats
     from llm_router import check_llm_health
+    from pathlib import Path
+    import json
     
     click.echo("=== Yggdrasil Status ===\n")
     
     # Beads
     stats = get_beads_stats()
     click.echo(f"Beads: {stats['open']} open, {stats['in_progress']} processing, {stats['closed']} completed")
+    
+    # In-progress tasks
+    if stats['in_progress'] > 0:
+        click.echo("\nProcessing Tasks:")
+        
+        # Find Beads directory
+        beads_path = None
+        for path in [Path('/beads'), Path.home() / 'homelab-config/yggdrasil-beads']:
+            if (path / '.beads/issues.jsonl').exists():
+                beads_path = path
+                break
+        
+        if beads_path:
+            in_progress = []
+            try:
+                with open(beads_path / '.beads/issues.jsonl') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                            if data.get('status') == 'in_progress':
+                                in_progress.append(data)
+                        except json.JSONDecodeError:
+                            # Skip corrupted lines
+                            pass
+            except Exception as e:
+                click.echo(f"  Error reading tasks: {e}", err=True)
+                in_progress = []
+            
+            if in_progress:
+                for task in in_progress:
+                    task_id = task.get('id', 'unknown')
+                    title = task.get('title', '')[:40]
+                    click.echo(f"  • {task_id}: {title}")
+            elif stats['in_progress'] > 0:
+                click.echo(f"  ({stats['in_progress']} tasks in progress - could not read details)")
     
     # LLM Health
     click.echo("\nLLM Hosts:")

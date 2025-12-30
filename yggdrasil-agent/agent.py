@@ -180,50 +180,95 @@ class BeadsClient:
                 raise FileNotFoundError("Could not find Beads directory")
         
         self.issues_file = self.beads_dir / '.beads/issues.jsonl'
+        self.lock_file = self.beads_dir / '.beads/issues.jsonl.lock'
         logger.info(f"Using Beads at: {self.beads_dir}")
     
     def get_ready_tasks(self) -> List[Dict[str, Any]]:
         """Get tasks that are open and ready to work"""
         tasks = []
-        with open(self.issues_file) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    task = json.loads(line)
-                    if task.get('status') == 'open' and task.get('issue_type') != 'epic':
-                        tasks.append(task)
-                except json.JSONDecodeError:
-                    continue
+        try:
+            with open(self.issues_file) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        task = json.loads(line)
+                        if task.get('status') == 'open' and task.get('issue_type') != 'epic':
+                            tasks.append(task)
+                    except json.JSONDecodeError:
+                        continue
+        except Exception as e:
+            logger.warning(f"Error reading Beads: {e}")
         return tasks
     
     def update_task(self, task_id: str, status: str, result: str = None):
-        """Update task status in Beads"""
-        lines = []
-        with open(self.issues_file) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
+        """Update task status in Beads (with locking)"""
+        import fcntl
+        import time
+        
+        # Try to acquire lock with timeout
+        lock_acquired = False
+        for attempt in range(10):
+            try:
+                lock_fd = open(self.lock_file, 'w')
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_acquired = True
+                break
+            except (IOError, OSError):
+                if attempt == 9:
+                    logger.warning(f"Could not acquire lock for {task_id}, proceeding anyway")
+                    lock_fd = None
+                    break
+                time.sleep(0.1)
+        
+        try:
+            # Read existing data
+            lines = []
+            try:
+                with open(self.issues_file) as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            task = json.loads(line)
+                            if task['id'] == task_id:
+                                task['status'] = status
+                                task['updated_at'] = datetime.now(timezone.utc).isoformat()
+                                if status == 'closed':
+                                    task['closed_at'] = datetime.now(timezone.utc).isoformat()
+                                if result:
+                                    task['result'] = result[:1000]  # Truncate long results
+                            lines.append(json.dumps(task))
+                        except json.JSONDecodeError:
+                            lines.append(line)
+            except Exception as e:
+                logger.error(f"Error reading Beads for update: {e}")
+                return
+            
+            # Write atomically (write to temp file first, then rename)
+            temp_file = self.issues_file.with_suffix('.jsonl.tmp')
+            try:
+                with open(temp_file, 'w') as f:
+                    for line in lines:
+                        f.write(line + '\n')
+                # Atomic rename
+                temp_file.replace(self.issues_file)
+            except Exception as e:
+                logger.error(f"Error writing Beads: {e}")
+                if temp_file.exists():
+                    temp_file.unlink()
+            
+            logger.info(f"Updated task {task_id} to {status}")
+        finally:
+            if lock_acquired and lock_fd:
                 try:
-                    task = json.loads(line)
-                    if task['id'] == task_id:
-                        task['status'] = status
-                        task['updated_at'] = datetime.now(timezone.utc).isoformat()
-                        if status == 'closed':
-                            task['closed_at'] = datetime.now(timezone.utc).isoformat()
-                        if result:
-                            task['result'] = result[:1000]  # Truncate long results
-                    lines.append(json.dumps(task))
-                except json.JSONDecodeError:
-                    lines.append(line)
-        
-        with open(self.issues_file, 'w') as f:
-            for line in lines:
-                f.write(line + '\n')
-        
-        logger.info(f"Updated task {task_id} to {status}")
+                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                    lock_fd.close()
+                    self.lock_file.unlink() if self.lock_file.exists() else None
+                except Exception:
+                    pass
 
 
 class YggdrasilAgent:
