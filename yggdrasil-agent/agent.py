@@ -234,6 +234,9 @@ class YggdrasilAgent:
         self.beads = BeadsClient()
         self.use_beeai = HAS_BEEAI
         
+        # Track which agents are busy (agent_name -> Future)
+        self.busy_agents = {}
+        
         # Initialize BeeAI agents if available
         if self.use_beeai:
             self._init_beeai_agents()
@@ -245,6 +248,15 @@ class YggdrasilAgent:
             'reasoning': self._handle_reasoning,
             'summarize': self._handle_summarize,
             'general': self._handle_general,
+        }
+        
+        # Map task types to agent names for busy tracking
+        self.task_to_agent = {
+            'code-generation': 'code',
+            'text-processing': 'text',
+            'reasoning': 'reasoning',
+            'summarize': 'text',
+            'general': 'reasoning',  # general tasks use reasoning agent
         }
     
     def _init_beeai_agents(self):
@@ -481,22 +493,81 @@ Please complete this task and provide a clear response."""
         self.process_task(task)
         return True
     
-    def run_loop(self, poll_interval: int = 30):
-        """Continuously poll for and process tasks"""
-        logger.info("Starting agent loop...")
+    def run_loop(self, poll_interval: int = 30, num_workers: int = 1):
+        """Continuously poll for and dispatch tasks to available agents"""
+        import concurrent.futures
         
-        while True:
-            try:
-                if not self.run_once():
-                    time.sleep(poll_interval)
+        logger.info("Starting dispatcher loop...")
+        
+        # One thread per agent type
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=3)
+        
+        try:
+            while True:
+                # Check for completed tasks and free up agents
+                done_agents = []
+                for agent_name, (future, task_id) in list(self.busy_agents.items()):
+                    if future.done():
+                        try:
+                            result = future.result()
+                            logger.info(f"Agent {agent_name} completed task {task_id}")
+                        except Exception as e:
+                            logger.error(f"Agent {agent_name} failed on {task_id}: {e}")
+                        done_agents.append(agent_name)
+                
+                for agent_name in done_agents:
+                    del self.busy_agents[agent_name]
+                
+                # Get open tasks
+                tasks = self.beads.get_ready_tasks()
+                
+                if tasks:
+                    # Try to assign tasks to idle agents
+                    for task in tasks:
+                        task_type = self._detect_task_type(task)
+                        agent_name = self.task_to_agent.get(task_type, 'reasoning')
+                        
+                        # Skip if this agent is busy
+                        if agent_name in self.busy_agents:
+                            continue
+                        
+                        # Check if we have this agent
+                        agent_available = (
+                            (agent_name == 'code' and self.code_agent) or
+                            (agent_name == 'text' and self.text_agent) or
+                            (agent_name == 'reasoning' and self.reasoning_agent)
+                        )
+                        
+                        if not agent_available:
+                            continue
+                        
+                        # Dispatch task to agent
+                        task_id = task.get('id')
+                        logger.info(f"Dispatching {task_id} to {agent_name} agent")
+                        
+                        future = executor.submit(self.process_task, task)
+                        self.busy_agents[agent_name] = (future, task_id)
+                
+                # Log status
+                busy_count = len(self.busy_agents)
+                if busy_count > 0:
+                    busy_list = [f"{name}:{tid}" for name, (_, tid) in self.busy_agents.items()]
+                    logger.debug(f"Busy agents: {busy_list}")
+                    time.sleep(2)  # Check frequently when work is happening
                 else:
-                    time.sleep(5)  # Brief pause between tasks
-            except KeyboardInterrupt:
-                logger.info("Agent stopped")
-                break
-            except Exception as e:
-                logger.exception(f"Error in agent loop: {e}")
-                time.sleep(poll_interval)
+                    time.sleep(poll_interval)
+                    
+        except KeyboardInterrupt:
+            logger.info("Dispatcher stopping...")
+            # Wait for in-flight tasks
+            for agent_name, (future, task_id) in self.busy_agents.items():
+                logger.info(f"Waiting for {agent_name} to finish {task_id}...")
+                try:
+                    future.result(timeout=60)
+                except Exception as e:
+                    logger.error(f"Task {task_id} failed: {e}")
+            executor.shutdown(wait=True)
+            logger.info("Dispatcher stopped")
 
 
 def main():

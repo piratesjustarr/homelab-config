@@ -105,10 +105,10 @@ def run(beads):
 @cli.command()
 @click.option('--interval', type=int, default=30, help='Poll interval (seconds)')
 def loop(interval):
-    """Continuously process tasks"""
+    """Continuously process tasks (dispatches to all available agents)"""
     
     agent = YggdrasilAgent()
-    click.echo(f"Starting agent loop (interval: {interval}s)...")
+    click.echo(f"Starting dispatcher (interval: {interval}s)...")
     
     try:
         agent.run_loop(poll_interval=interval)
