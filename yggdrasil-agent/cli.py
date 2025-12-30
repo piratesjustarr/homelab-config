@@ -95,10 +95,7 @@ def status():
 @click.option('--beads', type=click.Path(exists=True), default=None, help='Beads directory')
 def run(beads):
     """Process one ready task"""
-    if not beads:
-        beads = Path.home() / 'homelab-config/yggdrasil-beads'
-    
-    agent = YggdrasilAgent(beads_dir=str(beads))
+    agent = YggdrasilAgent()
     if agent.run_once():
         click.echo("✓ Task processed")
     else:
@@ -106,14 +103,11 @@ def run(beads):
 
 
 @cli.command()
-@click.option('--beads', type=click.Path(exists=True), default=None, help='Beads directory')
 @click.option('--interval', type=int, default=30, help='Poll interval (seconds)')
-def loop(beads, interval):
+def loop(interval):
     """Continuously process tasks"""
-    if not beads:
-        beads = Path.home() / 'homelab-config/yggdrasil-beads'
     
-    agent = YggdrasilAgent(beads_dir=str(beads))
+    agent = YggdrasilAgent()
     click.echo(f"Starting agent loop (interval: {interval}s)...")
     
     try:

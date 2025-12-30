@@ -20,24 +20,27 @@ if ! command -v ramalama &> /dev/null; then
     exit 1
 fi
 
-echo "[1/2] Starting granite3.1-moe:3b on :$PORT1 (fast general purpose)"
+echo "[1/2] Starting granite3.1-moe:3b on :$PORT1 (MoE - dense on GPU, experts on CPU RAM)"
+echo "Using --ngl 99 --n-cpu-moe 10: dense layers on GPU, experts 1-10 on CPU RAM"
 ramalama serve -d \
     --name fenrir-fast \
     --port $PORT1 \
     --host 0.0.0.0 \
+    --ngl 99 \
+    --n-cpu-moe 10 \
     ollama://granite3.1-moe:3b
 
 echo "Waiting for model to start..."
 sleep 5
 
 echo ""
-echo "[2/2] Starting qwen2.5:7b on :$PORT2 (chat/text with partial offload)"
-echo "Using --ngl 24 to keep ~2GB on GPU, rest on CPU RAM"
+echo "[2/2] Starting qwen2.5:7b on :$PORT2 (dense model, partial GPU offload)"
+echo "Using --ngl 22: keep ~4.5GB on GPU, rest on CPU RAM"
 ramalama serve -d \
     --name fenrir-chat \
     --port $PORT2 \
     --host 0.0.0.0 \
-    --ngl 24 \
+    --ngl 22 \
     ollama://qwen2.5:7b
 
 echo "Waiting for model to start..."

@@ -180,7 +180,13 @@ def get_sync_state(beads_path: Path = None) -> Dict[str, Any]:
 def get_beads_stats(beads_path: Path = None) -> Dict[str, int]:
     """Get Beads statistics"""
     if not beads_path:
-        beads_path = Path.home() / 'homelab-config/yggdrasil-beads'
+        # Try container mount first, then local
+        for path in [Path('/beads'), Path.home() / 'homelab-config/yggdrasil-beads']:
+            if (path / '.beads/issues.jsonl').exists():
+                beads_path = path
+                break
+        else:
+            beads_path = Path.home() / 'homelab-config/yggdrasil-beads'
     
     issues_file = beads_path / '.beads/issues.jsonl'
     

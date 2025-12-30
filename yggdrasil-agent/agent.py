@@ -11,8 +11,10 @@ Goals:
 
 import json
 import os
+import sys
 import time
 import logging
+import asyncio
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
@@ -24,6 +26,15 @@ logging.basicConfig(
     format='%(asctime)s [Agent] %(levelname)s: %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Try to import BeeAI agents (only available in Python 3.12)
+try:
+    from beeai_agents import CodeGenerationAgent, TextProcessingAgent, ReasoningAgent
+    HAS_BEEAI = True
+    logger.info("BeeAI agents available")
+except ImportError:
+    HAS_BEEAI = False
+    logger.info("BeeAI not available (requires Python 3.12)")
 
 
 class LLMClient:
@@ -155,10 +166,11 @@ class BeadsClient:
         if beads_dir:
             self.beads_dir = Path(beads_dir)
         else:
-            # Try common locations
+            # Try common locations (container, then local)
             for path in [
+                Path('/beads'),  # Container mount
+                Path('/vault'),  # Container mount
                 Path.home() / 'homelab-config/yggdrasil-beads',
-                Path('/app/beads'),
                 Path.cwd(),
             ]:
                 if (path / '.beads/issues.jsonl').exists():
@@ -220,13 +232,56 @@ class YggdrasilAgent:
     def __init__(self):
         self.llm = LLMClient()
         self.beads = BeadsClient()
+        self.use_beeai = HAS_BEEAI
         
-        # Task type handlers
+        # Initialize BeeAI agents if available
+        if self.use_beeai:
+            self._init_beeai_agents()
+        
+        # Task type handlers (use BeeAI if available, else fallback to simple LLM)
         self.handlers = {
             'code-generation': self._handle_code_generation,
             'text-processing': self._handle_text_processing,
+            'reasoning': self._handle_reasoning,
             'summarize': self._handle_summarize,
+            'general': self._handle_general,
         }
+    
+    def _init_beeai_agents(self):
+        """Initialize BeeAI agents with LLM router"""
+        try:
+            from beeai_framework.backend import ChatModel
+            
+            # Get local and cloud LLMs
+            # Local: use router's best model
+            best_local = self.llm.router.get_host_for_task('general')
+            if best_local:
+                self.local_llm = ChatModel.from_name(
+                    f'ollama:{best_local.model}',
+                    options={'api_base': best_local.api_base}
+                )
+            else:
+                self.local_llm = None
+            
+            # Cloud fallback: Anthropic (requires API key)
+            self.cloud_llm = None
+            if self.llm.anthropic_key:
+                try:
+                    import os
+                    os.environ['ANTHROPIC_API_KEY'] = self.llm.anthropic_key
+                    self.cloud_llm = ChatModel.from_name('anthropic:claude-sonnet-4-20250514')
+                except Exception as e:
+                    logger.warning(f"Failed to initialize Anthropic: {e}")
+            
+            # Create agent instances
+            self.code_agent = CodeGenerationAgent(self.local_llm, self.cloud_llm) if self.local_llm else None
+            self.text_agent = TextProcessingAgent(self.local_llm, self.cloud_llm) if self.local_llm else None
+            self.reasoning_agent = ReasoningAgent(self.local_llm, self.cloud_llm) if self.local_llm else None
+            
+            logger.info("BeeAI agents initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize BeeAI agents: {e}")
+            self.use_beeai = False
     
     def _detect_task_type(self, task: Dict[str, Any]) -> str:
         """Detect task type from labels or title"""
@@ -235,8 +290,10 @@ class YggdrasilAgent:
         
         if 'code-generation' in labels or title.startswith('code task:'):
             return 'code-generation'
-        if 'text-processing' in labels:
+        if 'text-processing' in labels or 'summarize' in title:
             return 'text-processing'
+        if 'reasoning' in labels or 'analyze' in title or 'explain' in title:
+            return 'reasoning'
         if 'summarize' in title:
             return 'summarize'
         
@@ -247,37 +304,120 @@ class YggdrasilAgent:
         description = task.get('description', '')
         title = task.get('title', '')
         
+        # Use BeeAI if available
+        if self.use_beeai and self.code_agent:
+            try:
+                prompt = f"""Generate code for the following task:
+
+Title: {title}
+Description: {description}
+
+Provide complete, working code with comments. Include any necessary imports.
+Use the write_file tool to save the code to an appropriate location."""
+                
+                result = asyncio.run(self.code_agent.process(prompt))
+                return result
+            except Exception as e:
+                logger.warning(f"BeeAI code generation failed: {e}, falling back to simple LLM")
+        
+        # Fallback to simple LLM
         prompt = f"""Generate code for the following task:
 
 Title: {title}
 Description: {description}
 
 Provide complete, working code with comments. Include any necessary imports."""
-
+        
         return self.llm.generate(prompt, task_type='code')
     
     def _handle_text_processing(self, task: Dict[str, Any]) -> str:
         """Process text (summarize, extract, rewrite, etc.)"""
         description = task.get('description', '')
+        title = task.get('title', '')
         
-        # The description contains the text and instructions
+        # Use BeeAI if available
+        if self.use_beeai and self.text_agent:
+            try:
+                prompt = f"""Task: {title}
+
+{description}
+
+Use tools as needed to read input files or write results."""
+                
+                result = asyncio.run(self.text_agent.process(prompt))
+                return result
+            except Exception as e:
+                logger.warning(f"BeeAI text processing failed: {e}, falling back to simple LLM")
+        
+        # Fallback to simple LLM
         prompt = description
-        
         return self.llm.generate(prompt, task_type='text')
     
     def _handle_summarize(self, task: Dict[str, Any]) -> str:
         """Summarize content"""
         description = task.get('description', '')
         
-        prompt = f"Please summarize the following:\n\n{description}"
+        # Use BeeAI if available
+        if self.use_beeai and self.reasoning_agent:
+            try:
+                prompt = f"Please summarize the following:\n\n{description}"
+                result = asyncio.run(self.reasoning_agent.process(prompt))
+                return result
+            except Exception as e:
+                logger.warning(f"BeeAI summarization failed: {e}, falling back to simple LLM")
         
+        # Fallback to simple LLM
+        prompt = f"Please summarize the following:\n\n{description}"
         return self.llm.generate(prompt, task_type='text')
+    
+    def _handle_reasoning(self, task: Dict[str, Any]) -> str:
+        """Handle complex reasoning tasks"""
+        description = task.get('description', '')
+        title = task.get('title', '')
+        
+        # Use BeeAI if available
+        if self.use_beeai and self.reasoning_agent:
+            try:
+                prompt = f"""Task: {title}
+
+{description}
+
+Provide thorough analysis and reasoning."""
+                
+                result = asyncio.run(self.reasoning_agent.process(prompt))
+                return result
+            except Exception as e:
+                logger.warning(f"BeeAI reasoning failed: {e}, falling back to simple LLM")
+        
+        # Fallback to simple LLM
+        prompt = f"""Task: {title}
+
+{description}
+
+Please analyze this thoroughly and provide clear reasoning."""
+        
+        return self.llm.generate(prompt, task_type='general')
     
     def _handle_general(self, task: Dict[str, Any]) -> str:
         """Handle general tasks"""
         description = task.get('description', '')
         title = task.get('title', '')
         
+        # Use BeeAI if available and has agents
+        if self.use_beeai and self.reasoning_agent:
+            try:
+                prompt = f"""Task: {title}
+
+{description}
+
+Please complete this task and provide a clear response."""
+                
+                result = asyncio.run(self.reasoning_agent.process(prompt))
+                return result
+            except Exception as e:
+                logger.warning(f"BeeAI general handling failed: {e}, falling back to simple LLM")
+        
+        # Fallback to simple LLM
         prompt = f"""Task: {title}
 
 {description}
