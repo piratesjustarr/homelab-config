@@ -1,0 +1,72 @@
+# Yggdrasil Staging Configuration
+# Used for integration testing and staging deployments
+
+environment: staging
+
+hosts:
+  - name: surtr-reasoning
+    url: http://surtr:8081/v1
+    model: gpt-oss:20b
+    capabilities: [reasoning, complex, planning]
+    priority: 1
+    timeout_seconds: 120
+
+  - name: fenrir-chat
+    url: http://fenrir:8081/v1
+    model: qwen2.5:7b
+    capabilities: [chat, text, text-processing, summarize]
+    priority: 1
+    timeout_seconds: 120
+
+  - name: skadi-code
+    url: http://skadi:8080/v1
+    model: granite-code:8b
+    capabilities: [code, code-generation, code-review, code-fix]
+    priority: 1
+    timeout_seconds: 120
+
+cloud_providers:
+  - name: anthropic
+    model: claude-sonnet-4-20250514
+    capabilities: [code, reasoning, text, general, fallback]
+    priority: 99
+    timeout_seconds: 60
+
+routing:
+  code-generation: [code]
+  code-review: [code, reasoning]
+  code-fix: [code]
+  text-processing: [text, chat]
+  summarize: [text, chat]
+  reasoning: [reasoning, complex]
+  general: [general, chat]
+  default: [general]
+
+# Moderate concurrency for staging testing
+concurrency:
+  surtr-reasoning: 2
+  fenrir-chat: 2
+  skadi-code: 2
+
+retry:
+  max_attempts: 3
+  initial_delay_ms: 100
+  max_delay_ms: 5000
+  exponential_base: 2.0
+  jitter: true
+
+observability:
+  enabled: true
+  enable_metrics: true
+  enable_error_tracking: true
+  metrics_port: 8888
+
+# Test BeeAI integration in staging
+beeai:
+  enabled: true
+  python_version: "3.12"
+  fallback_to_simple_llm: true
+
+beads_dir: ~/homelab-config/yggdrasil-beads
+
+log_level: INFO
