@@ -144,16 +144,33 @@ def run(beads):
 
 @cli.command()
 @click.option('--interval', type=int, default=30, help='Poll interval (seconds)')
-def loop(interval):
+@click.option('--async', 'use_async', is_flag=True, help='Use async dispatcher (better concurrency)')
+def loop(interval, use_async):
     """Continuously process tasks (dispatches to all available agents)"""
     
-    agent = YggdrasilAgent()
-    click.echo(f"Starting dispatcher (interval: {interval}s)...")
-    
-    try:
-        agent.run_loop(poll_interval=interval)
-    except KeyboardInterrupt:
-        click.echo("\n✓ Agent stopped")
+    if use_async:
+        # Use improved async dispatcher with per-host concurrency
+        import asyncio
+        from async_dispatcher import AsyncYggdrasilAgent
+        
+        click.echo(f"Starting async dispatcher (interval: {interval}s)...")
+        click.echo("Mode: Per-host concurrency limits")
+        
+        try:
+            agent = AsyncYggdrasilAgent()
+            asyncio.run(agent.run_loop(poll_interval=interval))
+        except KeyboardInterrupt:
+            click.echo("\n✓ Async dispatcher stopped")
+    else:
+        # Use legacy thread-based dispatcher
+        agent = YggdrasilAgent()
+        click.echo(f"Starting dispatcher (interval: {interval}s)...")
+        click.echo("Mode: One task per agent type")
+        
+        try:
+            agent.run_loop(poll_interval=interval)
+        except KeyboardInterrupt:
+            click.echo("\n✓ Agent stopped")
 
 
 if __name__ == '__main__':
