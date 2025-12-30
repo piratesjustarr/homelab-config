@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import time
+import traceback
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
@@ -20,6 +21,9 @@ from dataclasses import dataclass, field
 from heapq import heappush, heappop
 
 logger = logging.getLogger(__name__)
+
+# Import observability (will be lazy-loaded)
+observability = None
 
 
 @dataclass
@@ -253,7 +257,7 @@ class AsyncYggdrasilAgent:
     - Pure asyncio (no thread/asyncio mixing)
     """
     
-    def __init__(self, beads_dir: str = None):
+    def __init__(self, beads_dir: str = None, enable_observability: bool = True):
         from agent import LLMClient, set_task_context, log_task
         from artifact_handler import ArtifactHandler
         
@@ -262,6 +266,11 @@ class AsyncYggdrasilAgent:
         self.artifact_handler = ArtifactHandler()
         self.set_task_context = set_task_context
         self.log_task = log_task
+        
+        # Initialize observability
+        if enable_observability:
+            from observability import init_observability
+            init_observability()
         
         # Host concurrency limits (adjust based on GPU VRAM)
         # - surtr (8GB): 2 concurrent reasoning tasks
@@ -394,44 +403,159 @@ Please complete this task and provide a clear response."""
         self,
         task: Dict[str, Any],
         host: str,
+        attempt: int = 1,
     ) -> None:
         """
-        Process a single task with host concurrency limit.
+        Process a single task with host concurrency limit and error handling.
         
-        Acquires host semaphore, processes task, releases semaphore.
+        Acquires host semaphore, processes task with retry logic, releases semaphore.
+        Stores full error tracebacks in Beads for post-mortem analysis.
         """
+        from observability import (
+            get_structured_logger, get_metrics, get_error_tracker,
+            TaskMetrics, TaskStatus, RetryPolicy, with_retry
+        )
+        
         task_id = task.get('id')
         task_type = self._detect_task_type(task)
+        start_time = time.time()
+        
+        # Initialize observability
+        obs_logger = get_structured_logger()
+        metrics_collector = get_metrics()
+        error_tracker = get_error_tracker()
         
         try:
             # Acquire slot on host
             await self.concurrency_mgr.acquire(host)
             self.concurrency_mgr.register_task(host, task_id)
             
-            logger.info(f"[{task_id}] Starting (type: {task_type}, host: {host})")
+            # Log task start with structured context
+            obs_logger.log_task_event(
+                'info',
+                task_id,
+                'task_started',
+                task_type=task_type,
+                host=host,
+                attempt=attempt,
+            )
             
             # Mark as in-progress
             await self.beads.update_task(task_id, 'in_progress')
             
             try:
-                # Get handler and process
+                # Get handler and process with retry
                 handler = self.handlers.get(task_type, self._handle_general)
-                result = await handler(task)
+                
+                # Retry policy: exponential backoff for transient errors
+                retry_policy = RetryPolicy(
+                    max_attempts=3,
+                    initial_delay_ms=100,
+                    max_delay_ms=5000,
+                )
+                
+                # Execute with retry wrapper
+                result = await with_retry(
+                    handler,
+                    task,
+                    policy=retry_policy,
+                    logger=obs_logger,
+                    task_id=task_id,
+                )
                 
                 result_str = str(result) if not isinstance(result, str) else result
+                duration_ms = (time.time() - start_time) * 1000
+                
+                # Record metrics
+                metrics_data = TaskMetrics(
+                    task_id=task_id,
+                    task_type=task_type,
+                    host=host,
+                    status=TaskStatus.SUCCESS,
+                    start_time=start_time,
+                    end_time=time.time(),
+                    duration_ms=duration_ms,
+                    attempt=attempt,
+                )
+                metrics_collector.record_task_completion(metrics_data)
+                obs_logger.log_metrics(metrics_data)
                 
                 # Mark as completed
                 await self.beads.update_task(task_id, 'closed', result_str)
-                logger.info(f"[{task_id}] Completed")
                 
             except Exception as e:
-                logger.error(f"[{task_id}] Failed: {e}")
-                await self.beads.update_task(task_id, 'blocked', str(e))
+                duration_ms = (time.time() - start_time) * 1000
+                
+                # Track error with full context
+                error_context = {
+                    'task_type': task_type,
+                    'host': host,
+                    'attempt': attempt,
+                    'description': task.get('description', '')[:200],  # First 200 chars
+                }
+                error_record = error_tracker.track_error(task_id, e, error_context)
+                
+                # Determine if we should retry
+                should_retry = (
+                    attempt < 3 and
+                    retry_policy.should_retry(attempt - 1, e)
+                )
+                
+                # Record failure metrics
+                status = TaskStatus.RETRY if should_retry else TaskStatus.FAILED
+                metrics_data = TaskMetrics(
+                    task_id=task_id,
+                    task_type=task_type,
+                    host=host,
+                    status=status,
+                    start_time=start_time,
+                    end_time=time.time(),
+                    duration_ms=duration_ms,
+                    attempt=attempt,
+                    error_message=str(e),
+                    error_traceback=error_record['traceback'],
+                )
+                metrics_collector.record_task_completion(metrics_data)
+                obs_logger.log_metrics(metrics_data)
+                
+                if should_retry:
+                    # Schedule retry with exponential backoff
+                    delay_ms = retry_policy.get_delay_ms(attempt - 1)
+                    obs_logger.log_task_event(
+                        'warning',
+                        task_id,
+                        'task_retry_scheduled',
+                        attempt=attempt + 1,
+                        delay_ms=delay_ms,
+                        error=str(e),
+                    )
+                    
+                    # Release semaphore before sleeping
+                    self.concurrency_mgr.unregister_task(host, task_id)
+                    self.concurrency_mgr.release(host)
+                    
+                    # Sleep and retry
+                    await asyncio.sleep(delay_ms / 1000.0)
+                    await self._process_task_with_limit(task, host, attempt + 1)
+                else:
+                    # Final failure: store full error in Beads
+                    error_str = error_tracker.format_for_beads(error_record)
+                    await self.beads.update_task(task_id, 'blocked', error_str)
+                    
+                    obs_logger.log_task_event(
+                        'error',
+                        task_id,
+                        'task_failed_final',
+                        attempt=attempt,
+                        error=str(e),
+                        reason='non_retryable' if not should_retry else 'max_retries',
+                    )
         
         finally:
-            # Release host slot
-            self.concurrency_mgr.unregister_task(host, task_id)
-            self.concurrency_mgr.release(host)
+            # Release host slot (if not already released by retry)
+            if attempt == 1 or not should_retry:
+                self.concurrency_mgr.unregister_task(host, task_id)
+                self.concurrency_mgr.release(host)
     
     async def run_loop(self, poll_interval: int = 30) -> None:
         """
@@ -517,6 +641,41 @@ Please complete this task and provide a clear response."""
             logger.info("Dispatcher stopped")
 
 
+class MetricsExporter:
+    """Export dispatcher metrics via HTTP endpoint"""
+    
+    def __init__(self, port: int = 8888):
+        self.port = port
+    
+    async def start_server(self) -> None:
+        """Start metrics HTTP server"""
+        from aiohttp import web
+        from observability import get_metrics
+        
+        async def metrics_handler(request):
+            """Prometheus format metrics endpoint"""
+            metrics = get_metrics()
+            prometheus_text = metrics.export_prometheus()
+            return web.Response(text=prometheus_text, content_type='text/plain')
+        
+        async def metrics_json_handler(request):
+            """JSON format metrics endpoint"""
+            metrics = get_metrics()
+            json_data = metrics.export_json()
+            return web.json_response(json_data)
+        
+        app = web.Application()
+        app.router.add_get('/metrics', metrics_handler)
+        app.router.add_get('/metrics.json', metrics_json_handler)
+        
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, 'localhost', self.port)
+        await site.start()
+        
+        logger.info(f"Metrics server started on http://localhost:{self.port}/metrics")
+
+
 async def main():
     """Entry point for async dispatcher"""
     import sys
@@ -528,6 +687,12 @@ async def main():
         beads_dir = None
     
     agent = AsyncYggdrasilAgent(beads_dir)
+    
+    # Optionally start metrics server
+    if '--metrics' in sys.argv:
+        exporter = MetricsExporter()
+        asyncio.create_task(exporter.start_server())
+    
     await agent.run_loop()
 
 
