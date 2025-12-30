@@ -43,14 +43,7 @@ def log_task(level: int, message: str):
     else:
         logger.log(level, message)
 
-# Try to import BeeAI agents (only available in Python 3.12)
-try:
-    from beeai_agents import CodeGenerationAgent, TextProcessingAgent, ReasoningAgent
-    HAS_BEEAI = True
-    logger.info("BeeAI agents available")
-except ImportError:
-    HAS_BEEAI = False
-    logger.info("BeeAI not available (requires Python 3.12)")
+# BeeAI agents removed - using LLM router with host-based task routing instead
 
 
 class LLMClient:
@@ -293,7 +286,7 @@ class YggdrasilAgent:
     def __init__(self):
         self.llm = LLMClient()
         self.beads = BeadsClient()
-        self.use_beeai = HAS_BEEAI
+        self.use_beeai = False  # BeeAI requires Python 3.12+ container
         
         # Artifact handler for auto-saving generated code
         from artifact_handler import ArtifactHandler
@@ -302,11 +295,7 @@ class YggdrasilAgent:
         # Track which agents are busy (agent_name -> Future)
         self.busy_agents = {}
         
-        # Initialize BeeAI agents if available
-        if self.use_beeai:
-            self._init_beeai_agents()
-        
-        # Task type handlers (use BeeAI if available, else fallback to simple LLM)
+        # Task type handlers (use LLM router for host-based routing)
         self.handlers = {
             'code-generation': self._handle_code_generation,
             'text-processing': self._handle_text_processing,
@@ -374,6 +363,10 @@ class YggdrasilAgent:
         except Exception as e:
             logger.warning(f"Failed to initialize BeeAI agents: {e}")
             self.use_beeai = False
+            # Initialize agent attributes as None for fallback mode
+            self.code_agent = None
+            self.text_agent = None
+            self.reasoning_agent = None
     
     def _detect_task_type(self, task: Dict[str, Any]) -> str:
         """Detect task type from labels or title"""
