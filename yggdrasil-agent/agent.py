@@ -251,15 +251,15 @@ class YggdrasilAgent:
         """Initialize BeeAI agents with LLM router"""
         try:
             from beeai_framework.backend import ChatModel
+            import os
             
             # Get local and cloud LLMs
             # Local: use router's best model
             best_local = self.llm.router.get_host_for_task('general')
             if best_local:
-                self.local_llm = ChatModel.from_name(
-                    f'ollama:{best_local.model}',
-                    options={'api_base': best_local.api_base}
-                )
+                # BeeAI/litellm needs OLLAMA_API_BASE env var, not options
+                os.environ['OLLAMA_API_BASE'] = best_local.api_base
+                self.local_llm = ChatModel.from_name(f'ollama:{best_local.model}')
             else:
                 self.local_llm = None
             
@@ -267,7 +267,6 @@ class YggdrasilAgent:
             self.cloud_llm = None
             if self.llm.anthropic_key:
                 try:
-                    import os
                     os.environ['ANTHROPIC_API_KEY'] = self.llm.anthropic_key
                     self.cloud_llm = ChatModel.from_name('anthropic:claude-sonnet-4-20250514')
                 except Exception as e:
