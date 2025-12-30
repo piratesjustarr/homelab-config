@@ -248,20 +248,10 @@ class YggdrasilAgent:
         }
     
     def _init_beeai_agents(self):
-        """Initialize BeeAI agents with LLM router"""
+        """Initialize BeeAI agents with task-specific LLM routing"""
         try:
             from beeai_framework.backend import ChatModel
             import os
-            
-            # Get local and cloud LLMs
-            # Local: use router's best model
-            best_local = self.llm.router.get_host_for_task('general')
-            if best_local:
-                # BeeAI/litellm needs OLLAMA_API_BASE env var, not options
-                os.environ['OLLAMA_API_BASE'] = best_local.api_base
-                self.local_llm = ChatModel.from_name(f'ollama:{best_local.model}')
-            else:
-                self.local_llm = None
             
             # Cloud fallback: Anthropic (requires API key)
             self.cloud_llm = None
@@ -272,10 +262,36 @@ class YggdrasilAgent:
                 except Exception as e:
                     logger.warning(f"Failed to initialize Anthropic: {e}")
             
-            # Create agent instances
-            self.code_agent = CodeGenerationAgent(self.local_llm, self.cloud_llm) if self.local_llm else None
-            self.text_agent = TextProcessingAgent(self.local_llm, self.cloud_llm) if self.local_llm else None
-            self.reasoning_agent = ReasoningAgent(self.local_llm, self.cloud_llm) if self.local_llm else None
+            # Create task-specific agents with appropriate LLM hosts
+            # Code agent -> surtr-code (granite-code)
+            code_host = self.llm.router.get_host_for_task('code-generation')
+            if code_host:
+                os.environ['OLLAMA_API_BASE'] = code_host.api_base
+                code_llm = ChatModel.from_name(f'ollama:{code_host.model}')
+                self.code_agent = CodeGenerationAgent(code_llm, self.cloud_llm)
+                logger.info(f"Code agent using {code_host.name} ({code_host.model})")
+            else:
+                self.code_agent = None
+            
+            # Reasoning agent -> surtr-reasoning (gpt-oss) 
+            reasoning_host = self.llm.router.get_host_for_task('reasoning')
+            if reasoning_host:
+                os.environ['OLLAMA_API_BASE'] = reasoning_host.api_base
+                reasoning_llm = ChatModel.from_name(f'ollama:{reasoning_host.model}')
+                self.reasoning_agent = ReasoningAgent(reasoning_llm, self.cloud_llm)
+                logger.info(f"Reasoning agent using {reasoning_host.name} ({reasoning_host.model})")
+            else:
+                self.reasoning_agent = None
+            
+            # Text agent -> fenrir-chat (qwen)
+            text_host = self.llm.router.get_host_for_task('text-processing')
+            if text_host:
+                os.environ['OLLAMA_API_BASE'] = text_host.api_base
+                text_llm = ChatModel.from_name(f'ollama:{text_host.model}')
+                self.text_agent = TextProcessingAgent(text_llm, self.cloud_llm)
+                logger.info(f"Text agent using {text_host.name} ({text_host.model})")
+            else:
+                self.text_agent = None
             
             logger.info("BeeAI agents initialized")
         except Exception as e:
