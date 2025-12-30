@@ -521,8 +521,11 @@ Please complete this task and provide a clear response."""
                 # Get open tasks
                 tasks = self.beads.get_ready_tasks()
                 
+                # Track which agents got assigned work
+                assigned_this_round = 0
+                
                 if tasks:
-                    # Try to assign tasks to idle agents
+                    # Try to assign each task to an idle agent
                     for task in tasks:
                         task_type = self._detect_task_type(task)
                         agent_name = self.task_to_agent.get(task_type, 'reasoning')
@@ -547,14 +550,16 @@ Please complete this task and provide a clear response."""
                         
                         future = executor.submit(self.process_task, task)
                         self.busy_agents[agent_name] = (future, task_id)
+                        assigned_this_round += 1
                 
                 # Log status
                 busy_count = len(self.busy_agents)
                 if busy_count > 0:
-                    busy_list = [f"{name}:{tid}" for name, (_, tid) in self.busy_agents.items()]
-                    logger.debug(f"Busy agents: {busy_list}")
+                    busy_list = ', '.join([f"{name}:{tid}" for name, (_, tid) in self.busy_agents.items()])
+                    logger.info(f"Busy agents ({busy_count}): {busy_list}")
                     time.sleep(2)  # Check frequently when work is happening
                 else:
+                    logger.info(f"No agents busy, waiting {poll_interval}s...")
                     time.sleep(poll_interval)
                     
         except KeyboardInterrupt:
