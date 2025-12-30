@@ -295,6 +295,10 @@ class YggdrasilAgent:
         self.beads = BeadsClient()
         self.use_beeai = HAS_BEEAI
         
+        # Artifact handler for auto-saving generated code
+        from artifact_handler import ArtifactHandler
+        self.artifact_handler = ArtifactHandler()
+        
         # Track which agents are busy (agent_name -> Future)
         self.busy_agents = {}
         
@@ -376,19 +380,23 @@ class YggdrasilAgent:
         labels = task.get('labels', [])
         title = task.get('title', '').lower()
         
-        if 'code-generation' in labels or title.startswith('code task:'):
+        # Code tasks (generation, refactoring, fixes)
+        if 'code-generation' in labels or 'code-refactor' in labels or title.startswith('code:') or title.startswith('code task:'):
             return 'code-generation'
-        if 'text-processing' in labels or 'summarize' in title:
+        # Text tasks
+        if 'text-processing' in labels or 'text-generation' in labels:
             return 'text-processing'
+        # Specialized handlers
+        if 'summarize' in labels or 'summarize' in title:
+            return 'summarize'
         if 'reasoning' in labels or 'analyze' in title or 'explain' in title:
             return 'reasoning'
-        if 'summarize' in title:
-            return 'summarize'
         
         return 'general'
     
     def _handle_code_generation(self, task: Dict[str, Any]) -> str:
         """Generate code based on task description"""
+        task_id = task.get('id')
         description = task.get('description', '')
         title = task.get('title', '')
         
@@ -400,10 +408,18 @@ class YggdrasilAgent:
 Title: {title}
 Description: {description}
 
-Provide complete, working code with comments. Include any necessary imports.
-Use the write_file tool to save the code to an appropriate location."""
+Provide complete, working code with comments. Include any necessary imports."""
                 
                 result = asyncio.run(self.code_agent.process(prompt))
+                
+                # Auto-save artifact if output path specified
+                try:
+                    asyncio.run(self.artifact_handler.handle_agent_output(
+                        task, result, artifact_type='code'
+                    ))
+                except Exception as e:
+                    log_task(logging.WARNING, f"Failed to save artifact: {e}")
+                
                 return result
             except Exception as e:
                 logger.warning(f"BeeAI code generation failed: {e}, falling back to simple LLM")
@@ -416,7 +432,17 @@ Description: {description}
 
 Provide complete, working code with comments. Include any necessary imports."""
         
-        return self.llm.generate(prompt, task_type='code')
+        result = self.llm.generate(prompt, task_type='code')
+        
+        # Auto-save with simple LLM result too
+        try:
+            asyncio.run(self.artifact_handler.handle_agent_output(
+                task, result, artifact_type='code'
+            ))
+        except Exception as e:
+            log_task(logging.WARNING, f"Failed to save artifact: {e}")
+        
+        return result
     
     def _handle_text_processing(self, task: Dict[str, Any]) -> str:
         """Process text (summarize, extract, rewrite, etc.)"""
