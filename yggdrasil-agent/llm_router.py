@@ -31,6 +31,7 @@ class LLMHost:
     
     @property
     def api_base(self) -> str:
+        """OpenAI-compatible API base URL for ramalama."""
         return self.url
     
     @property 
@@ -49,6 +50,7 @@ class CloudProvider:
     
     @property
     def litellm_model(self) -> str:
+        """Model identifier for litellm with appropriate provider prefix."""
         if self.name == 'anthropic':
             return f"anthropic/{self.model}"
         return self.model
