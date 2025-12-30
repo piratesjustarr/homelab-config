@@ -27,6 +27,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Current task context for logging
+_current_task_id = None
+
+def set_task_context(task_id: str):
+    """Set the current task ID for logging context"""
+    global _current_task_id
+    _current_task_id = task_id
+
+def log_task(level: int, message: str):
+    """Log message with current task context"""
+    if _current_task_id:
+        prefix = f"[{_current_task_id}]"
+        logger.log(level, f"{prefix} {message}")
+    else:
+        logger.log(level, message)
+
 # Try to import BeeAI agents (only available in Python 3.12)
 try:
     from beeai_agents import CodeGenerationAgent, TextProcessingAgent, ReasoningAgent
@@ -501,9 +517,10 @@ Please complete this task and provide a clear response."""
     def process_task(self, task: Dict[str, Any]) -> str:
         """Process a single task"""
         task_id = task.get('id')
+        set_task_context(task_id)  # Set logging context
         task_type = self._detect_task_type(task)
         
-        logger.info(f"Processing {task_id} (type: {task_type})")
+        log_task(logging.INFO, f"Processing {task_id} (type: {task_type})")
         
         # Mark as in-progress
         self.beads.update_task(task_id, 'in_progress')
