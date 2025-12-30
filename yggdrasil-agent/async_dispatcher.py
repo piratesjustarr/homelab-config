@@ -258,14 +258,16 @@ class AsyncYggdrasilAgent:
     """
     
     def __init__(self, beads_dir: str = None, enable_observability: bool = True):
-        from agent import LLMClient, set_task_context, log_task
+        from llm_client_unified import UnifiedLLMClient
         from artifact_handler import ArtifactHandler
         
-        self.llm = LLMClient()
+        # Use unified LLM client (includes retry and circuit breaker logic)
+        self.llm = UnifiedLLMClient()
         self.beads = AsyncBeadsClient(beads_dir)
         self.artifact_handler = ArtifactHandler()
-        self.set_task_context = set_task_context
-        self.log_task = log_task
+        
+        # Task context logging (simple functions)
+        self._current_task_id = None
         
         # Initialize observability
         if enable_observability:
@@ -310,8 +312,10 @@ class AsyncYggdrasilAgent:
         """Detect task type from labels or title"""
         labels = task.get('labels', [])
         title = task.get('title', '').lower()
+        description = task.get('description', '').lower()
         
-        if 'code-generation' in labels or title.startswith('code:'):
+        # Check labels first (most reliable)
+        if 'code-generation' in labels or 'code' in labels:
             return 'code-generation'
         if 'code-refactor' in labels:
             return 'code-refactor'
@@ -321,7 +325,25 @@ class AsyncYggdrasilAgent:
             return 'text-processing'
         if 'summarize' in labels:
             return 'summarize'
-        if 'reasoning' in labels or 'analyze' in title:
+        if 'reasoning' in labels:
+            return 'reasoning'
+        
+        # Check title/description for keywords
+        if any(keyword in title for keyword in ['code', 'generate', 'implement', 'write']):
+            return 'code-generation'
+        if 'refactor' in title:
+            return 'code-refactor'
+        if 'review' in title or 'audit' in title:
+            return 'code-review'
+        if any(keyword in title for keyword in ['text', 'write', 'summarize', 'translate']):
+            return 'text-processing'
+        if any(keyword in title for keyword in ['analyze', 'reason', 'think', 'question']):
+            return 'reasoning'
+        
+        # Description-based fallback
+        if any(keyword in description for keyword in ['code', 'generate', 'implement', 'write']):
+            return 'code-generation'
+        if any(keyword in description for keyword in ['analyze', 'reason', 'think']):
             return 'reasoning'
         
         return 'general'

@@ -18,6 +18,7 @@ from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 from pathlib import Path
 from enum import Enum
+from logging.handlers import RotatingFileHandler
 import asyncio
 
 T = TypeVar('T')
@@ -75,13 +76,40 @@ class TaskMetrics:
 class StructuredLogger:
     """JSON-structured logging with task context"""
     
-    def __init__(self, name: str, output_file: Optional[Path] = None):
+    def __init__(self, name: str, output_file: Optional[Path] = None, max_bytes: int = 10485760, backup_count: int = 5):
+        """
+        Initialize structured logger.
+        
+        Args:
+            name: Logger name
+            output_file: Path to output file
+            max_bytes: Max size for rotating log file (default 10MB)
+            backup_count: Number of backup files to keep (default 5)
+        """
         self.logger = logging.getLogger(name)
         self.output_file = output_file
+        self.max_bytes = max_bytes
+        self.backup_count = backup_count
         
         if output_file:
             # Ensure directory exists
             output_file.parent.mkdir(parents=True, exist_ok=True)
+            # Set up rotating file handler if file specified
+            self._setup_rotating_handler(output_file)
+    
+    def _setup_rotating_handler(self, output_file: Path) -> None:
+        """Set up rotating file handler for the logger"""
+        try:
+            handler = RotatingFileHandler(
+                str(output_file),
+                maxBytes=self.max_bytes,
+                backupCount=self.backup_count,
+            )
+            formatter = logging.Formatter('%(message)s')
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
+        except Exception as e:
+            logging.warning(f"Failed to set up rotating handler: {e}")
     
     def log_task_event(
         self,
@@ -107,17 +135,9 @@ class StructuredLogger:
             **kwargs,
         }
         
-        # Log to standard logger
+        # Log to standard logger (uses rotating handler if configured)
         log_message = json.dumps(log_entry)
         getattr(self.logger, level.lower())(log_message)
-        
-        # Optionally write to file
-        if self.output_file:
-            try:
-                with open(self.output_file, 'a') as f:
-                    f.write(log_message + '\n')
-            except Exception as e:
-                self.logger.error(f"Failed to write to log file: {e}")
     
     def log_metrics(self, metrics: TaskMetrics) -> None:
         """Log task metrics"""
@@ -510,3 +530,80 @@ def get_error_tracker() -> ErrorTracker:
     if error_tracker is None:
         init_observability()
     return error_tracker
+
+
+class MetricsExporter:
+    """
+    HTTP metrics exporter for Prometheus scraping.
+    
+    Provides a simple HTTP endpoint at /metrics that exports metrics in Prometheus format.
+    """
+    
+    def __init__(self, port: int = 8888, host: str = '0.0.0.0'):
+        """
+        Initialize metrics exporter.
+        
+        Args:
+            port: Port to listen on (default 8888)
+            host: Host to bind to (default 0.0.0.0)
+        """
+        self.port = port
+        self.host = host
+        self.server = None
+        
+    async def start(self) -> None:
+        """Start metrics HTTP server (async)"""
+        try:
+            from aiohttp import web
+            
+            app = web.Application()
+            app.router.add_get('/metrics', self._metrics_handler)
+            
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(runner, self.host, self.port)
+            await site.start()
+            
+            logging.info(f"Metrics exporter started on http://{self.host}:{self.port}/metrics")
+            self.server = runner
+        except ImportError:
+            logging.warning("aiohttp not installed, metrics exporter disabled")
+    
+    async def stop(self) -> None:
+        """Stop metrics HTTP server"""
+        if self.server:
+            await self.server.cleanup()
+    
+    async def _metrics_handler(self, request) -> 'web.Response':
+        """Handle /metrics request"""
+        from aiohttp import web
+        
+        metrics_collector = get_metrics()
+        if not metrics_collector:
+            return web.Response(text="# No metrics available\n")
+        
+        # Format metrics in Prometheus format
+        lines = [
+            "# HELP yggdrasil_tasks_total Total number of tasks processed",
+            "# TYPE yggdrasil_tasks_total counter",
+        ]
+        
+        stats = metrics_collector.get_stats()
+        lines.append(f'yggdrasil_tasks_total{{status="completed"}} {stats["completed"]}')
+        lines.append(f'yggdrasil_tasks_total{{status="failed"}} {stats["failed"]}')
+        
+        lines.extend([
+            "",
+            "# HELP yggdrasil_latency_ms Task processing latency in milliseconds",
+            "# TYPE yggdrasil_latency_ms gauge",
+            f'yggdrasil_latency_ms{{quantile="p50"}} {stats.get("latency_p50", 0)}',
+            f'yggdrasil_latency_ms{{quantile="p95"}} {stats.get("latency_p95", 0)}',
+            f'yggdrasil_latency_ms{{quantile="p99"}} {stats.get("latency_p99", 0)}',
+            "",
+            "# HELP yggdrasil_tokens_total Total tokens processed",
+            "# TYPE yggdrasil_tokens_total counter",
+            f'yggdrasil_tokens_total{{direction="input"}} {stats.get("tokens_in", 0)}',
+            f'yggdrasil_tokens_total{{direction="output"}} {stats.get("tokens_out", 0)}',
+        ])
+        
+        return web.Response(text="\n".join(lines) + "\n")
