@@ -76,14 +76,19 @@ class ArtifactHandler:
             
             # Extract code block if it's Python/JS and contains code fences
             if extension in ['.py', '.js'] and '```' in output:
+                # Try to match code blocks with language specifier first
                 code_match = re.search(rf'```(?:python|javascript|js)?\n(.*?)\n```', output, re.DOTALL)
+                if not code_match:
+                    # Try to match any code block
+                    code_match = re.search(r'```\n(.*?)\n```', output, re.DOTALL)
+                
                 if code_match:
-                    content = code_match.group(1)
+                    content = code_match.group(1).strip()
                     logger.info(f"[{task_id}] Extracted code block from output")
                 else:
-                    content = output
+                    content = output.strip()
             else:
-                content = output
+                content = output.strip()
             
             # Write file
             output_path.write_text(content)
