@@ -427,12 +427,10 @@ Please complete this task and provide a clear response."""
         return self.llm.generate(prompt, task_type='general')
     
     def process_task(self, task: Dict[str, Any]) -> str:
-        """Process a single task with timing metrics"""
-        import time
+        """Process a single task"""
         task_id = task.get('id')
         task_type = self._detect_task_type(task)
         
-        start_time = time.time()
         logger.info(f"Processing {task_id} (type: {task_type})")
         
         # Mark as in-progress
@@ -440,16 +438,11 @@ Please complete this task and provide a clear response."""
         
         try:
             # Get handler
-            llm_start = time.time()
             handler = self.handlers.get(task_type, self._handle_general)
             result = handler(task)
-            llm_time = time.time() - llm_start
             
             # Mark as completed
             self.beads.update_task(task_id, 'closed', result)
-            
-            total_time = time.time() - start_time
-            logger.info(f"Task {task_id} completed in {total_time:.2f}s (LLM: {llm_time:.2f}s)")
             
             return result
             
@@ -489,10 +482,6 @@ Please complete this task and provide a clear response."""
 
 
 def main():
-    """Command-line entry point for the Yggdrasil agent.
-    
-    Parses arguments and runs the agent in once mode or continuous loop mode.
-    """
     import argparse
     
     parser = argparse.ArgumentParser(description='Yggdrasil Agent')

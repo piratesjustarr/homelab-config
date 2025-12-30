@@ -44,7 +44,7 @@ class BeadsSync:
             return {}
     
     @staticmethod
-    def save_sync_state(beads_path: Path, state: Dict[str, str]) -> None:
+    def save_sync_state(beads_path: Path, state: Dict[str, str]):
         """Save sync mapping to file"""
         sync_file = beads_path / BeadsSync.SYNC_FILE
         
