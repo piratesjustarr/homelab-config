@@ -3,12 +3,6 @@
 
 hosts:
   # Surtr - RTX 2070 8GB
-  - name: surtr-code
-    url: http://surtr:8080/v1
-    model: granite-code:8b
-    capabilities: [code, code-generation, code-review, code-fix]
-    priority: 1
-    
   - name: surtr-reasoning
     url: http://surtr:8081/v1
     model: gpt-oss:20b
@@ -16,12 +10,6 @@ hosts:
     priority: 1
 
   # Fenrir - RTX 4050 6GB + 64GB RAM
-  - name: fenrir-fast
-    url: http://fenrir:8080/v1
-    model: granite3.1-moe:3b
-    capabilities: [general, fast, simple]
-    priority: 1
-    
   - name: fenrir-chat
     url: http://fenrir:8081/v1
     model: qwen2.5:7b
@@ -29,11 +17,11 @@ hosts:
     priority: 1
 
   # Skadi - GTX 1650 Ti 4GB
-  - name: skadi-fast
+  - name: skadi-code
     url: http://skadi:8080/v1
-    model: granite3.1-moe:1b
-    capabilities: [fast, simple, quick]
-    priority: 2
+    model: granite-code:8b
+    capabilities: [code, code-generation, code-review, code-fix]
+    priority: 1
 
 # Cloud fallback (requires ANTHROPIC_API_KEY)
 cloud:
