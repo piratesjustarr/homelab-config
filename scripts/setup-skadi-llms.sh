@@ -20,10 +20,15 @@ if ! command -v ramalama &> /dev/null; then
 fi
 
 echo "[1/1] Starting granite3.1-moe:1b on :$PORT (ultra-fast simple tasks)"
+echo "Using --ngl 24 --n-cpu-moe 4: experts on CPU RAM for 4GB GPU"
 ramalama serve -d \
     --name skadi-fast \
     --port $PORT \
     --host 0.0.0.0 \
+    --ngl 24 \
+    --ctx-size 4096 \
+    --threads 4 \
+    --runtime-args="--n-cpu-moe 4" \
     ollama://granite3.1-moe:1b
 
 echo "Waiting for model to start..."

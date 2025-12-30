@@ -21,26 +21,30 @@ if ! command -v ramalama &> /dev/null; then
 fi
 
 echo "[1/2] Starting granite-code:8b on :$PORT1 (code generation, dense model)"
-echo "Using --ngl 24: keep ~4GB on GPU, rest on CPU RAM"
+echo "Using --ngl 24 --ctx-size 8192: keep ~4GB on GPU, rest on CPU RAM"
 ramalama serve -d \
     --name surtr-code \
     --port $PORT1 \
     --host 0.0.0.0 \
     --ngl 24 \
+    --ctx-size 8192 \
+    --threads 8 \
     ollama://granite-code:8b
 
 echo "Waiting for model to start..."
 sleep 5
 
 echo "[2/2] Starting gpt-oss:20b on :$PORT2 (MoE reasoning model)"
-echo "Using --ngl 99 --n-cpu-moe 20: dense on GPU, experts 1-20 on CPU RAM"
+echo "Using --ngl 32 --n-cpu-moe 16: dense on GPU, experts 1-16 on CPU RAM"
 echo "This is a large MoE model - may take time to load"
 ramalama serve -d \
     --name surtr-reasoning \
     --port $PORT2 \
     --host 0.0.0.0 \
-    --ngl 99 \
-    --n-cpu-moe 20 \
+    --ngl 32 \
+    --ctx-size 28192 \
+    --threads 8 \
+    --runtime-args="--n-cpu-moe 16" \
     ollama://gpt-oss:20b
 
 echo "Waiting for model to start..."
