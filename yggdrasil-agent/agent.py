@@ -456,10 +456,13 @@ Please complete this task and provide a clear response."""
             handler = self.handlers.get(task_type, self._handle_general)
             result = handler(task)
             
-            # Mark as completed
-            self.beads.update_task(task_id, 'closed', result)
+            # Ensure result is a string
+            result_str = str(result) if not isinstance(result, str) else result
             
-            return result
+            # Mark as completed
+            self.beads.update_task(task_id, 'closed', result_str)
+            
+            return result_str
             
         except Exception as e:
             logger.error(f"Task failed: {e}")
