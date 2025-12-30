@@ -255,7 +255,7 @@ class BeadsClient:
                                 if status == 'closed':
                                     task['closed_at'] = datetime.now(timezone.utc).isoformat()
                                 if result:
-                                    task['result'] = result[:1000]  # Truncate long results
+                                    task['result'] = result[:32000]  # Allow up to 32KB for detailed outputs
                             lines.append(json.dumps(task))
                         except json.JSONDecodeError:
                             lines.append(line)
